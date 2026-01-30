@@ -110,7 +110,7 @@ def _get_kpi_row(evidence: EvidencePack) -> dict[str, float] | None:
     out = {}
     for k, v in row.items():
         try:
-            if isinstance(v, (int, float)) and not pd.isna(v):
+            if isinstance(v, int | float) and not pd.isna(v):
                 out[k] = float(v)
         except Exception:
             pass
