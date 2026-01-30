@@ -1,9 +1,10 @@
 """Core data types and models for the cost agent."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Literal
 
 from .constants import (
     Aggregation,
@@ -12,7 +13,6 @@ from .constants import (
     SourceType,
     TimeWindowType,
 )
-
 
 # -----------------------------
 # Core planning / query contracts
@@ -29,9 +29,9 @@ class TimeWindow:
     """
 
     type: TimeWindowType
-    n_days: Optional[int] = None
-    start: Optional[date] = None
-    end: Optional[date] = None
+    n_days: int | None = None
+    start: date | None = None
+    end: date | None = None
 
 
 @dataclass(frozen=True)
@@ -41,13 +41,13 @@ class QueryFilters:
     Keep this conservative: only include fields we explicitly support.
     """
 
-    account_id: Optional[List[int]] = None
-    chat_type: Optional[List[str]] = None
-    chat_id: Optional[List[str]] = None
+    account_id: list[int] | None = None
+    chat_type: list[str] | None = None
+    chat_id: list[str] | None = None
 
-    has_tasks: Optional[bool] = None
-    has_classifications: Optional[bool] = None
-    has_both: Optional[bool] = None
+    has_tasks: bool | None = None
+    has_classifications: bool | None = None
+    has_both: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ class AggregationSpec:
 
     field: str
     agg: Aggregation
-    as_name: Optional[str] = None
+    as_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -77,11 +77,11 @@ class QuerySpec:
 
     time_window: TimeWindow
     filters: QueryFilters = field(default_factory=QueryFilters)
-    group_by: List[str] = field(default_factory=list)
-    aggregations: List[AggregationSpec] = field(default_factory=list)
-    sort: Optional[SortSpec] = None
-    top_n: Optional[int] = None
-    max_rows: Optional[int] = None
+    group_by: list[str] = field(default_factory=list)
+    aggregations: list[AggregationSpec] = field(default_factory=list)
+    sort: SortSpec | None = None
+    top_n: int | None = None
+    max_rows: int | None = None
 
 
 @dataclass(frozen=True)
@@ -95,10 +95,10 @@ class Lineage:
     dataset_version: str  # e.g., CSV file hash or DB snapshot id
     generated_at_utc: datetime
     time_window: TimeWindow
-    applied_filters: Dict[str, Any]
-    group_by: List[str]
+    applied_filters: dict[str, Any]
+    group_by: list[str]
     row_count: int
-    notes: Optional[str] = None
+    notes: str | None = None
 
 
 # -----------------------------
@@ -115,13 +115,13 @@ class ChartSpec:
     id: str
     type: ChartType
     table: str  # evidence table name
-    title: Optional[str] = None
+    title: str | None = None
 
     # generic fields to support common chart mappings
-    x: Optional[str] = None
-    y: Optional[Union[str, List[str]]] = None
-    label: Optional[str] = None
-    value: Optional[str] = None
+    x: str | None = None
+    y: str | list[str] | None = None
+    label: str | None = None
+    value: str | None = None
 
 
 @dataclass(frozen=True)
@@ -134,10 +134,10 @@ class ReportTemplate:
     title: str
     description: str
     time_window: TimeWindow
-    evidence_tables: List[str]
-    charts: List[ChartSpec]
-    constraints: Dict[str, Any] = field(default_factory=dict)
-    required_filters: List[str] = field(default_factory=list)
+    evidence_tables: list[str]
+    charts: list[ChartSpec]
+    constraints: dict[str, Any] = field(default_factory=dict)
+    required_filters: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -148,10 +148,10 @@ class RunArtifacts:
 
     run_id: str
     output_dir: str
-    dashboard_png: Optional[str] = None
-    summary_txt: Optional[str] = None
-    evidence_dir: Optional[str] = None
-    run_record_json: Optional[str] = None
+    dashboard_png: str | None = None
+    summary_txt: str | None = None
+    evidence_dir: str | None = None
+    run_record_json: str | None = None
 
 
 @dataclass(frozen=True)
@@ -162,12 +162,12 @@ class RunRecord:
 
     run_id: str
     started_at_utc: datetime
-    finished_at_utc: Optional[datetime]
+    finished_at_utc: datetime | None
     mode: Literal["button", "ad_hoc"]
-    template_id: Optional[str]
-    user_input: Optional[str]
-    query_specs: List[QuerySpec]
-    lineage: List[Lineage]
+    template_id: str | None
+    user_input: str | None
+    query_specs: list[QuerySpec]
+    lineage: list[Lineage]
     artifacts: RunArtifacts
-    verifier: Dict[str, Any] = field(default_factory=dict)
-    notes: Dict[str, Any] = field(default_factory=dict)
+    verifier: dict[str, Any] = field(default_factory=dict)
+    notes: dict[str, Any] = field(default_factory=dict)

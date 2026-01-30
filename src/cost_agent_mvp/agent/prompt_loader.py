@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
 
 
 @dataclass(frozen=True)
@@ -20,7 +19,7 @@ class PromptLoader:
 
     def __init__(self, prompts_dir: str = "src/agent/prompts") -> None:
         self.prompts_dir = Path(prompts_dir)
-        self._cache: Dict[str, str] = {}
+        self._cache: dict[str, str] = {}
 
     def _read(self, filename: str) -> str:
         key = str(self.prompts_dir / filename)
@@ -36,7 +35,7 @@ class PromptLoader:
         return text
 
     @staticmethod
-    def render(template: str, vars: Optional[Dict[str, str]] = None) -> str:
+    def render(template: str, vars: dict[str, str] | None = None) -> str:
         if not vars:
             return template
 
@@ -58,8 +57,8 @@ class PromptLoader:
     def load_and_render(
         self,
         name: str,
-        user_vars: Optional[Dict[str, str]] = None,
-        system_vars: Optional[Dict[str, str]] = None,
+        user_vars: dict[str, str] | None = None,
+        system_vars: dict[str, str] | None = None,
     ) -> PromptBundle:
         bundle = self.load_bundle(name)
         return PromptBundle(

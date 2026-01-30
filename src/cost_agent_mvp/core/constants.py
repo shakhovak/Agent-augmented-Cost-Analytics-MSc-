@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import FrozenSet
 
 
 class SourceType(str, Enum):
@@ -51,7 +50,7 @@ DEFAULT_TOP_N: int = 10
 
 # Drilldown safety defaults
 DRILLDOWN_MAX_DAYS: int = 7
-DRILLDOWN_REQUIRED_FILTERS: FrozenSet[str] = frozenset({"account_id"})
+DRILLDOWN_REQUIRED_FILTERS: frozenset[str] = frozenset({"account_id"})
 
 
 @dataclass(frozen=True)

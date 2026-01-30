@@ -7,7 +7,7 @@ import argparse
 import sys
 from datetime import date as date_type
 
-from src.core.utils_dates import parse_date, compute_yesterday
+from src.core.utils_dates import compute_yesterday, parse_date
 from src.reports.daily_report import run_standard_daily_report
 
 

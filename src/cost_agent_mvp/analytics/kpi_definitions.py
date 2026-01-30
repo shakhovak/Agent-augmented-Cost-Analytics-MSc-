@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Tuple
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
-
 from src.core.errors import ValidationError
-
 
 # -----------------------------
 # Helpers
@@ -19,9 +16,7 @@ from src.core.errors import ValidationError
 def _require_columns(df: pd.DataFrame, cols: Iterable[str]) -> None:
     missing = [c for c in cols if c not in df.columns]
     if missing:
-        raise ValidationError(
-            f"Missing required columns for KPI computation: {missing}"
-        )
+        raise ValidationError(f"Missing required columns for KPI computation: {missing}")
 
 
 def _safe_float(v) -> float:
@@ -63,9 +58,7 @@ def dials_analyzed(df: pd.DataFrame) -> int:
     tmp = df[df["total_cost"].fillna(0) > 0]
     if tmp.empty:
         return 0
-    return int(
-        tmp.drop_duplicates(subset=["account_id", "chat_id", "chat_type"]).shape[0]
-    )
+    return int(tmp.drop_duplicates(subset=["account_id", "chat_id", "chat_type"]).shape[0])
 
 
 def total_cost_sum(df: pd.DataFrame) -> float:
@@ -73,7 +66,7 @@ def total_cost_sum(df: pd.DataFrame) -> float:
     return float(df["total_cost"].fillna(0).sum())
 
 
-def component_costs_sum(df: pd.DataFrame) -> Dict[str, float]:
+def component_costs_sum(df: pd.DataFrame) -> dict[str, float]:
     """
     Returns key component sums used in dashboards and explanations.
     """
@@ -86,7 +79,7 @@ def component_costs_sum(df: pd.DataFrame) -> Dict[str, float]:
         "cost_qc",
         "cost_check_list",
     ]
-    out: Dict[str, float] = {}
+    out: dict[str, float] = {}
     for c in cols:
         if c in df.columns:
             out[c] = float(df[c].fillna(0).sum())
@@ -153,7 +146,7 @@ def per_account_total_cost(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def distribution_stats(values: pd.Series) -> Dict[str, float]:
+def distribution_stats(values: pd.Series) -> dict[str, float]:
     """
     Compact distribution summary for reporting/evaluation.
     """
@@ -194,9 +187,7 @@ def histogram_table(values: pd.Series, bins: int = 20) -> pd.DataFrame:
     vmin = float(s.min())
     vmax = float(s.max())
     if vmin == vmax:
-        return pd.DataFrame(
-            [{"bin_left": vmin, "bin_right": vmax, "count": int(len(s))}]
-        )
+        return pd.DataFrame([{"bin_left": vmin, "bin_right": vmax, "count": int(len(s))}])
 
     counts, edges = np.histogram(s.values, bins=bins)
     rows = []
@@ -211,7 +202,7 @@ def histogram_table(values: pd.Series, bins: int = 20) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def delta(current: float, previous: float) -> Tuple[float, float]:
+def delta(current: float, previous: float) -> tuple[float, float]:
     """
     Returns (delta_abs, delta_pct). If previous is 0, pct is 0 unless current>0, then 1.0.
     """

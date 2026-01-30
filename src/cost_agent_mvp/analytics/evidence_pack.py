@@ -2,29 +2,25 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Dict, Optional
 
 import pandas as pd
-
-from src.core.errors import ValidationError
 from src.analytics.kpi_definitions import (
     active_users,
     avg_cost_per_account_diluted,
     avg_cost_per_account_non_diluted,
     component_costs_sum,
-    dials_analyzed,
     delta,
+    dials_analyzed,
+    distribution_stats,
     histogram_table,
     per_account_total_cost,
     total_cost_sum,
-    distribution_stats,
 )
-
+from src.core.errors import ValidationError
 
 # Evidence pack is a dict[str, DataFrame]
-EvidencePack = Dict[str, pd.DataFrame]
+EvidencePack = dict[str, pd.DataFrame]
 
 
 def _require_columns(df: pd.DataFrame, cols) -> None:
@@ -150,29 +146,23 @@ def build_standard_daily_evidence(
         service_breakdown["share_of_total"] = (
             service_breakdown["cost"] / total if total > 0 else 0.0
         )
-        service_breakdown = service_breakdown.sort_values(
-            "cost", ascending=False
-        ).reset_index(drop=True)
-    else:
-        service_breakdown = pd.DataFrame(
-            columns=["date", "component", "cost", "share_of_total"]
+        service_breakdown = service_breakdown.sort_values("cost", ascending=False).reset_index(
+            drop=True
         )
+    else:
+        service_breakdown = pd.DataFrame(columns=["date", "component", "cost", "share_of_total"])
 
     # --- Top accounts by total cost (today) ---
     per_acc_today = per_account_total_cost(df_today)
     if not per_acc_today.empty:
-        per_acc_today = per_acc_today.sort_values(
-            "total_cost", ascending=False
-        ).reset_index(drop=True)
-        total = float(per_acc_today["total_cost"].sum())
-        per_acc_today["share_of_total"] = (
-            per_acc_today["total_cost"] / total if total > 0 else 0.0
+        per_acc_today = per_acc_today.sort_values("total_cost", ascending=False).reset_index(
+            drop=True
         )
+        total = float(per_acc_today["total_cost"].sum())
+        per_acc_today["share_of_total"] = per_acc_today["total_cost"] / total if total > 0 else 0.0
         top_accounts_cost = per_acc_today.head(top_n).copy()
     else:
-        top_accounts_cost = pd.DataFrame(
-            columns=["account_id", "total_cost", "share_of_total"]
-        )
+        top_accounts_cost = pd.DataFrame(columns=["account_id", "total_cost", "share_of_total"])
 
     # --- Top accounts by delta vs previous day ---
     per_acc_prev = per_account_total_cost(df_prev).rename(
@@ -183,9 +173,7 @@ def build_standard_daily_evidence(
         if not per_acc_today.empty
         else pd.DataFrame(columns=["account_id", "total_cost_today"])
     )
-    merged = per_acc_today2.merge(per_acc_prev, on="account_id", how="outer").fillna(
-        0.0
-    )
+    merged = per_acc_today2.merge(per_acc_prev, on="account_id", how="outer").fillna(0.0)
 
     if not merged.empty:
         merged["delta_abs"] = merged["total_cost_today"] - merged["total_cost_prev_day"]
@@ -198,9 +186,7 @@ def build_standard_daily_evidence(
             axis=1,
         )
         top_accounts_delta = (
-            merged.sort_values("delta_abs", ascending=False)
-            .head(top_n)
-            .reset_index(drop=True)
+            merged.sort_values("delta_abs", ascending=False).head(top_n).reset_index(drop=True)
         )
     else:
         top_accounts_delta = pd.DataFrame(
@@ -261,9 +247,7 @@ def build_standard_daily_evidence(
     # --- Distribution (today) ---
     # For histogram we use per-account daily totals (this can be many accounts but the histogram is compact).
     per_acc_vals = (
-        per_acc_today["total_cost"]
-        if not per_acc_today.empty
-        else pd.Series([], dtype=float)
+        per_acc_today["total_cost"] if not per_acc_today.empty else pd.Series([], dtype=float)
     )
     dist_hist = histogram_table(per_acc_vals, bins=20)
     # Put a conventional column name for plotting configs

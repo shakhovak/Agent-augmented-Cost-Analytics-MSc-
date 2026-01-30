@@ -7,7 +7,6 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional, Tuple
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ChatAction, ContentType
@@ -20,7 +19,6 @@ from aiogram.types import (
     Message,
 )
 from dotenv import load_dotenv
-
 from src.agent.orchestrator import Orchestrator
 
 # -----------------------------
@@ -69,12 +67,12 @@ orchestrator = Orchestrator(
 
 @dataclass
 class UserSession:
-    report_day: Optional[date] = None  # if None -> yesterday (UTC)
+    report_day: date | None = None  # if None -> yesterday (UTC)
     use_llm: bool = USE_LLM_ANALYST_DEFAULT
     show_debug: bool = False
 
 
-user_sessions: Dict[int, UserSession] = {}
+user_sessions: dict[int, UserSession] = {}
 
 
 def get_session(user_id: int) -> UserSession:
@@ -107,16 +105,8 @@ def build_main_keyboard() -> InlineKeyboardMarkup:
                     callback_data="help:setdate",
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="🧪 Toggle LLM summary", callback_data="toggle:llm"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🧾 Toggle debug (verifier)", callback_data="toggle:debug"
-                )
-            ],
+            [InlineKeyboardButton(text="🧪 Toggle LLM summary", callback_data="toggle:llm")],
+            [InlineKeyboardButton(text="🧾 Toggle debug (verifier)", callback_data="toggle:debug")],
         ]
     )
 
@@ -174,7 +164,7 @@ async def send_run_artifacts(
     message_or_chat_id: int,
     *,
     answer_text: str,
-    dashboard_png: Optional[str],
+    dashboard_png: str | None,
     run_id: str,
     verifier_status: str,
     show_debug: bool,
@@ -360,9 +350,7 @@ async def cb_report(callback: CallbackQuery) -> None:
         report_day = session.report_day or compute_yesterday_utc()
 
     await callback.answer()
-    await bot.send_chat_action(
-        chat_id=callback.message.chat.id, action=ChatAction.TYPING
-    )
+    await bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
 
     try:
         out = orchestrator.run_button_standard_daily(

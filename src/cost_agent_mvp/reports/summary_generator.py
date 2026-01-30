@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Dict, List
-
 import pandas as pd
 
-
-EvidencePack = Dict[str, pd.DataFrame]
+EvidencePack = dict[str, pd.DataFrame]
 
 
 def _fmt_money(x: float) -> str:
@@ -44,7 +41,7 @@ def generate_daily_summary(evidence: EvidencePack, top_n: int = 5) -> str:
     dist_stats = evidence.get("distribution_stats", pd.DataFrame())
     exc = evidence.get("exceptions_queue", pd.DataFrame())
 
-    lines: List[str] = []
+    lines: list[str] = []
     lines.append("Daily Cost Monitoring Summary")
     lines.append("=" * 30)
 
@@ -95,16 +92,14 @@ def generate_daily_summary(evidence: EvidencePack, top_n: int = 5) -> str:
         for _, row in tc.iterrows():
             lines.append(
                 f"- account {int(row['account_id'])}: {_fmt_money(row['total_cost'])} "
-                f"({ _fmt_pct(row['share_of_total']) } of total)"
+                f"({_fmt_pct(row['share_of_total'])} of total)"
             )
     else:
         lines.append("- Not available")
 
     lines.append("")
     lines.append(f"Top {top_n} accounts by day-over-day increase:")
-    if not top_delta.empty and {"account_id", "delta_abs", "delta_pct"}.issubset(
-        top_delta.columns
-    ):
+    if not top_delta.empty and {"account_id", "delta_abs", "delta_pct"}.issubset(top_delta.columns):
         td = top_delta.head(top_n)
         for _, row in td.iterrows():
             lines.append(

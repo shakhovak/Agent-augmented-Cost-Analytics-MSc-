@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, datetime, timedelta
-from typing import Optional, Tuple
 
 from .constants import TimeWindowType
 from .errors import ValidationError
@@ -19,9 +18,7 @@ def parse_date(value: str) -> date:
     try:
         return datetime.fromisoformat(value).date()
     except Exception as e:
-        raise ValidationError(
-            f"Invalid date '{value}'. Expected ISO format YYYY-MM-DD."
-        ) from e
+        raise ValidationError(f"Invalid date '{value}'. Expected ISO format YYYY-MM-DD.") from e
 
 
 def today_utc_date() -> date:
@@ -29,13 +26,13 @@ def today_utc_date() -> date:
     return datetime.utcnow().date()
 
 
-def compute_yesterday(ref: Optional[date] = None) -> Tuple[date, date]:
+def compute_yesterday(ref: date | None = None) -> tuple[date, date]:
     d = ref or today_utc_date()
     y = d - timedelta(days=1)
     return y, y
 
 
-def compute_last_n_days(n_days: int, ref: Optional[date] = None) -> Tuple[date, date]:
+def compute_last_n_days(n_days: int, ref: date | None = None) -> tuple[date, date]:
     if n_days <= 0:
         raise ValidationError("n_days must be positive.")
     d = ref or today_utc_date()
@@ -44,7 +41,7 @@ def compute_last_n_days(n_days: int, ref: Optional[date] = None) -> Tuple[date, 
     return start, end
 
 
-def normalize_time_window(tw: TimeWindow, ref: Optional[date] = None) -> TimeWindow:
+def normalize_time_window(tw: TimeWindow, ref: date | None = None) -> TimeWindow:
     """
     Returns a TimeWindow with concrete start/end for downstream execution.
     Convention: inclusive start and inclusive end.

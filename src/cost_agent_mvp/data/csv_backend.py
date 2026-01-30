@@ -1,12 +1,11 @@
 """CSV backend for loading and querying data."""
+
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Any
 
 import pandas as pd
-
 from src.core.constants import (
     Aggregation,
     SafetyLimits,
@@ -24,13 +23,11 @@ from src.core.types import (
     Lineage,
     QueryFilters,
     QuerySpec,
-    SortSpec,
     TimeWindow,
 )
 from src.core.utils_dates import normalize_time_window
 from src.core.utils_hash import sha256_file
 from src.data.schema import DatasetSchema, default_joint_schema, load_csv
-
 
 _AGG_MAP = {
     Aggregation.SUM: "sum",
@@ -55,8 +52,8 @@ class CsvBackend:
         self,
         csv_path: str,
         dataset_name: str = "joint_costs_daily",
-        schema: Optional[DatasetSchema] = None,
-        limits: Optional[SafetyLimits] = None,
+        schema: DatasetSchema | None = None,
+        limits: SafetyLimits | None = None,
     ) -> None:
         self.csv_path = csv_path
         self.dataset_name = dataset_name
@@ -79,7 +76,7 @@ class CsvBackend:
     # Public API
     # ---------------------------
 
-    def query(self, spec: QuerySpec) -> Tuple[pd.DataFrame, Lineage]:
+    def query(self, spec: QuerySpec) -> tuple[pd.DataFrame, Lineage]:
         """
         Execute a QuerySpec safely and return (result_df, lineage).
         """
@@ -136,19 +133,13 @@ class CsvBackend:
         days = (tw.end - tw.start).days + 1
         hard = self.limits.max_days_hard
         if days > hard:
-            raise TimeWindowExceeded(
-                f"Requested {days} days exceeds hard limit {hard} days."
-            )
+            raise TimeWindowExceeded(f"Requested {days} days exceeds hard limit {hard} days.")
 
         # Drilldown safety: if chat_id is filtered or grouped, require account_id and restrict days
-        uses_chat_id = ("chat_id" in spec.group_by) or (
-            spec.filters.chat_id is not None
-        )
+        uses_chat_id = ("chat_id" in spec.group_by) or (spec.filters.chat_id is not None)
         if uses_chat_id:
             if not spec.filters.account_id:
-                raise UnsupportedQuery(
-                    "Drilldown by chat_id requires an account_id filter."
-                )
+                raise UnsupportedQuery("Drilldown by chat_id requires an account_id filter.")
             if days > self.limits.drilldown_max_days:
                 raise TimeWindowExceeded(
                     f"Drilldown queries are limited to {self.limits.drilldown_max_days} days."
@@ -161,9 +152,7 @@ class CsvBackend:
     def _apply_time_window(self, df: pd.DataFrame, tw: TimeWindow) -> pd.DataFrame:
         assert tw.start is not None and tw.end is not None
         # 'date' is already datetime.date (from schema coercion)
-        mask = (df[self.schema.date_column] >= tw.start) & (
-            df[self.schema.date_column] <= tw.end
-        )
+        mask = (df[self.schema.date_column] >= tw.start) & (df[self.schema.date_column] <= tw.end)
         return df.loc[mask]
 
     def _apply_filters(self, df: pd.DataFrame, flt: QueryFilters) -> pd.DataFrame:
@@ -180,9 +169,7 @@ class CsvBackend:
 
         # Flags: stored as Int64 nullable; treat True as ==1, False as ==0
         if flt.has_tasks is not None and "has_tasks" in out.columns:
-            out = out[
-                out["has_tasks"].fillna(0).astype(int) == (1 if flt.has_tasks else 0)
-            ]
+            out = out[out["has_tasks"].fillna(0).astype(int) == (1 if flt.has_tasks else 0)]
 
         if flt.has_classifications is not None and "has_classifications" in out.columns:
             out = out[
@@ -191,46 +178,38 @@ class CsvBackend:
             ]
 
         if flt.has_both is not None and "has_both" in out.columns:
-            out = out[
-                out["has_both"].fillna(0).astype(int) == (1 if flt.has_both else 0)
-            ]
+            out = out[out["has_both"].fillna(0).astype(int) == (1 if flt.has_both else 0)]
 
         return out
 
     def _group_and_aggregate(
         self,
         df: pd.DataFrame,
-        group_by: List[str],
-        aggs: List[AggregationSpec],
+        group_by: list[str],
+        aggs: list[AggregationSpec],
     ) -> pd.DataFrame:
         if not aggs:
             # If you group without aggregations, that's usually dangerous (can explode rows).
             # Force a count as a safe default.
-            aggs = [
-                AggregationSpec(
-                    field=group_by[0], agg=Aggregation.COUNT, as_name="row_count"
-                )
-            ]
+            aggs = [AggregationSpec(field=group_by[0], agg=Aggregation.COUNT, as_name="row_count")]
 
         gb = df.groupby(group_by, dropna=False)
 
         # Build aggregation dict
-        agg_dict: Dict[str, Any] = {}
-        distinct_specs: List[AggregationSpec] = []
+        agg_dict: dict[str, Any] = {}
+        distinct_specs: list[AggregationSpec] = []
 
         for a in aggs:
             out_name = a.as_name or f"{a.agg.value}_{a.field}"
             if a.agg == Aggregation.COUNT_DISTINCT:
-                distinct_specs.append(
-                    AggregationSpec(field=a.field, agg=a.agg, as_name=out_name)
-                )
+                distinct_specs.append(AggregationSpec(field=a.field, agg=a.agg, as_name=out_name))
             else:
                 if a.field not in agg_dict:
                     agg_dict[a.field] = {}
                 agg_dict[a.field][out_name] = _AGG_MAP[a.agg]
 
         # pandas supports named aggregations via tuples or dict forms; use NamedAgg pattern
-        named_aggs: Dict[str, pd.NamedAgg] = {}
+        named_aggs: dict[str, pd.NamedAgg] = {}
         for field, sub in agg_dict.items():
             for out_name, func in sub.items():
                 named_aggs[out_name] = pd.NamedAgg(column=field, aggfunc=func)
@@ -245,14 +224,12 @@ class CsvBackend:
 
         return res
 
-    def _aggregate_no_group(
-        self, df: pd.DataFrame, aggs: List[AggregationSpec]
-    ) -> pd.DataFrame:
+    def _aggregate_no_group(self, df: pd.DataFrame, aggs: list[AggregationSpec]) -> pd.DataFrame:
         if not aggs:
             # Safe default single-row count
             return pd.DataFrame({"row_count": [len(df)]})
 
-        out: Dict[str, Any] = {}
+        out: dict[str, Any] = {}
         for a in aggs:
             name = a.as_name or f"{a.agg.value}_{a.field}"
             if a.agg == Aggregation.COUNT_DISTINCT:
@@ -262,9 +239,7 @@ class CsvBackend:
                 out[name] = getattr(df[a.field], func)()
         return pd.DataFrame([out])
 
-    def _apply_sort_topn_and_caps(
-        self, df: pd.DataFrame, spec: QuerySpec
-    ) -> pd.DataFrame:
+    def _apply_sort_topn_and_caps(self, df: pd.DataFrame, spec: QuerySpec) -> pd.DataFrame:
         out = df
 
         # Sorting: allow sorting by produced aggregation alias too
@@ -290,9 +265,7 @@ class CsvBackend:
         max_rows = spec.max_rows or self.limits.max_rows_default
         hard = self.limits.max_rows_hard
         if len(out) > hard:
-            raise RowLimitExceeded(
-                f"Query result has {len(out)} rows, exceeds hard limit {hard}."
-            )
+            raise RowLimitExceeded(f"Query result has {len(out)} rows, exceeds hard limit {hard}.")
         if len(out) > max_rows:
             # Soft cap: truncate deterministically
             out = out.head(max_rows)
@@ -303,14 +276,14 @@ class CsvBackend:
     # Helpers
     # ---------------------------
 
-    def _derived_names(self, spec: QuerySpec) -> List[str]:
-        names: List[str] = []
+    def _derived_names(self, spec: QuerySpec) -> list[str]:
+        names: list[str] = []
         for a in spec.aggregations:
             names.append(a.as_name or f"{a.agg.value}_{a.field}")
         return names
 
     def _make_lineage(self, tw: TimeWindow, spec: QuerySpec, row_count: int) -> Lineage:
-        applied_filters: Dict[str, Any] = {
+        applied_filters: dict[str, Any] = {
             "account_id": spec.filters.account_id,
             "chat_type": spec.filters.chat_type,
             "chat_id": spec.filters.chat_id,

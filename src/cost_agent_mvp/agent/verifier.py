@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
-
-EvidencePack = Dict[str, pd.DataFrame]
+EvidencePack = dict[str, pd.DataFrame]
 
 
 @dataclass(frozen=True)
@@ -22,11 +20,11 @@ class VerifierIssue:
 @dataclass(frozen=True)
 class VerifierResult:
     status: str  # PASS | FAIL
-    issues: List[VerifierIssue]
+    issues: list[VerifierIssue]
     summary: str
 
 
-def _extract_numbers(text: str) -> List[float]:
+def _extract_numbers(text: str) -> list[float]:
     """
     Extract numbers from text in a conservative way.
     Supports:
@@ -40,7 +38,7 @@ def _extract_numbers(text: str) -> List[float]:
         return []
     # Grab sequences like 1,234.56 or 1234 or 1 234,56 (we normalize)
     candidates = re.findall(r"(?<!\w)[+-]?\d[\d\s,]*\.?\d*(?:%?)", text)
-    out: List[float] = []
+    out: list[float] = []
     for c in candidates:
         c = c.strip()
         if not c:
@@ -58,7 +56,7 @@ def _extract_numbers(text: str) -> List[float]:
     return out
 
 
-def _round_variants(x: float) -> Set[str]:
+def _round_variants(x: float) -> set[str]:
     """
     Create a small set of string variants to match typical formatting.
     """
@@ -70,12 +68,12 @@ def _round_variants(x: float) -> Set[str]:
     return variants
 
 
-def _evidence_number_bank(evidence: EvidencePack, max_cells: int = 20000) -> Set[str]:
+def _evidence_number_bank(evidence: EvidencePack, max_cells: int = 20000) -> set[str]:
     """
     Build a bank of numeric values present in the evidence pack as string variants.
     We cap work to keep verification fast.
     """
-    bank: Set[str] = set()
+    bank: set[str] = set()
     seen = 0
 
     for _, df in evidence.items():
@@ -103,7 +101,7 @@ def _evidence_number_bank(evidence: EvidencePack, max_cells: int = 20000) -> Set
     return bank
 
 
-def _get_kpi_row(evidence: EvidencePack) -> Optional[Dict[str, float]]:
+def _get_kpi_row(evidence: EvidencePack) -> dict[str, float] | None:
     kpi = evidence.get("kpi_today_vs_yesterday")
     if kpi is None or not isinstance(kpi, pd.DataFrame) or kpi.empty:
         return None
@@ -119,7 +117,7 @@ def _get_kpi_row(evidence: EvidencePack) -> Optional[Dict[str, float]]:
     return out
 
 
-def _direction_word(text: str) -> Optional[str]:
+def _direction_word(text: str) -> str | None:
     """
     Very conservative detection of direction words.
     """
@@ -147,7 +145,7 @@ def verify_numeric_fidelity(
     This is intentionally conservative: it flags likely hallucinated numbers,
     but may allow some numbers that coincidentally match. It’s a baseline verifier.
     """
-    issues: List[VerifierIssue] = []
+    issues: list[VerifierIssue] = []
 
     if require_kpi_table and (
         "kpi_today_vs_yesterday" not in evidence
@@ -162,9 +160,7 @@ def verify_numeric_fidelity(
                 suggested_fix="Ensure kpi_today_vs_yesterday is generated and passed to the verifier.",
             )
         )
-        return VerifierResult(
-            status="FAIL", issues=issues, summary="Missing KPI evidence."
-        )
+        return VerifierResult(status="FAIL", issues=issues, summary="Missing KPI evidence.")
 
     bank = _evidence_number_bank(evidence)
     mentioned = _extract_numbers(answer_text)
@@ -220,13 +216,11 @@ def verify_numeric_fidelity(
                 )
 
     status = "PASS" if not issues else "FAIL"
-    summary = (
-        "All checks passed." if status == "PASS" else f"{len(issues)} issue(s) found."
-    )
+    summary = "All checks passed." if status == "PASS" else f"{len(issues)} issue(s) found."
     return VerifierResult(status=status, issues=issues, summary=summary)
 
 
-def verifier_result_to_json(res: VerifierResult) -> Dict:
+def verifier_result_to_json(res: VerifierResult) -> dict:
     """
     Convenience for saving verifier outputs in run logs.
     """

@@ -6,13 +6,12 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import uuid4
 
 import pandas as pd
 import yaml
 from dotenv import load_dotenv
-
 from src.agent.analyst import Analyst
 from src.agent.planner import Planner, PlannerPlan
 from src.agent.verifier import (
@@ -37,13 +36,13 @@ class OrchestratorOutput:
     mode: str  # "button" | "ad_hoc"
     output_dir: str
     evidence: EvidencePack
-    dashboard_png: Optional[str]
+    dashboard_png: str | None
     answer_text: str
     verifier: VerifierResult
     run_record_json: str
 
 
-def _load_yaml(path: str) -> Dict[str, Any]:
+def _load_yaml(path: str) -> dict[str, Any]:
     p = Path(path)
     if not p.exists():
         raise ConfigError(f"Config file not found: {path}")
@@ -76,12 +75,10 @@ def _serialize_dt(obj: Any) -> Any:
     return obj
 
 
-def _run_record_to_json(rr: RunRecord) -> Dict[str, Any]:
+def _run_record_to_json(rr: RunRecord) -> dict[str, Any]:
     d = asdict(rr)
     d["started_at_utc"] = _serialize_dt(rr.started_at_utc)
-    d["finished_at_utc"] = (
-        _serialize_dt(rr.finished_at_utc) if rr.finished_at_utc else None
-    )
+    d["finished_at_utc"] = _serialize_dt(rr.finished_at_utc) if rr.finished_at_utc else None
     # ensure notes are json-serializable
     d["notes"] = json.loads(json.dumps(d.get("notes", {}), default=_serialize_dt))
     return d
@@ -107,9 +104,7 @@ def _apply_filters_df(df: pd.DataFrame, plan: PlannerPlan) -> pd.DataFrame:
     if f.chat_id:
         # Drilldown safety is already enforced in planner prompts, but keep defense-in-depth
         if not f.account_id:
-            raise ValidationError(
-                "chat_id filter requires account_id filter (drilldown safety)."
-            )
+            raise ValidationError("chat_id filter requires account_id filter (drilldown safety).")
         out = out[out["chat_id"].isin(f.chat_id)]
 
     if f.has_tasks is not None:
@@ -117,8 +112,7 @@ def _apply_filters_df(df: pd.DataFrame, plan: PlannerPlan) -> pd.DataFrame:
 
     if f.has_classifications is not None:
         out = out[
-            out["has_classifications"].fillna(0).astype(int)
-            == (1 if f.has_classifications else 0)
+            out["has_classifications"].fillna(0).astype(int) == (1 if f.has_classifications else 0)
         ]
 
     if f.has_both is not None:
@@ -229,9 +223,7 @@ class Orchestrator:
             answer_text = generate_daily_summary(evidence=evidence)
 
         # Verify
-        verifier_res = verify_numeric_fidelity(
-            answer_text=answer_text, evidence=evidence
-        )
+        verifier_res = verify_numeric_fidelity(answer_text=answer_text, evidence=evidence)
 
         # Persist artifacts
         _export_evidence_pack(evidence, evidence_dir)
@@ -423,9 +415,7 @@ class Orchestrator:
         else:
             answer_text = generate_daily_summary(evidence=evidence)
 
-        verifier_res = verify_numeric_fidelity(
-            answer_text=answer_text, evidence=evidence
-        )
+        verifier_res = verify_numeric_fidelity(answer_text=answer_text, evidence=evidence)
 
         _export_evidence_pack(evidence, evidence_dir)
         summary_txt = str(Path(output_dir) / "answer.txt")
