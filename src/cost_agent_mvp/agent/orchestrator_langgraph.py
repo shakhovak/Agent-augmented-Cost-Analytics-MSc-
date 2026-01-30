@@ -6,13 +6,11 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import uuid4
 
 import pandas as pd
-import yaml
 from dotenv import load_dotenv
-
 from src.agent.analyst import Analyst
 from src.agent.planner import Planner, PlannerPlan
 from src.agent.verifier import (
@@ -21,7 +19,7 @@ from src.agent.verifier import (
     verify_numeric_fidelity,
 )
 from src.analytics.evidence_pack import EvidencePack, build_standard_daily_evidence
-from src.core.errors import ConfigError, ValidationError
+from src.core.errors import ValidationError
 from src.core.types import RunArtifacts, RunRecord
 from src.data.csv_backend import CsvBackend
 from src.reports.summary_generator import generate_daily_summary
@@ -36,7 +34,7 @@ class GraphOutput:
     output_dir: str
     answer_text: str
     verifier: VerifierResult
-    dashboard_png: Optional[str]
+    dashboard_png: str | None
     run_record_json: str
 
 
@@ -65,14 +63,12 @@ def _serialize_dt(obj: Any) -> Any:
     return obj
 
 
-def _run_record_to_json(rr: RunRecord) -> Dict[str, Any]:
+def _run_record_to_json(rr: RunRecord) -> dict[str, Any]:
     from dataclasses import asdict
 
     d = asdict(rr)
     d["started_at_utc"] = _serialize_dt(rr.started_at_utc)
-    d["finished_at_utc"] = (
-        _serialize_dt(rr.finished_at_utc) if rr.finished_at_utc else None
-    )
+    d["finished_at_utc"] = _serialize_dt(rr.finished_at_utc) if rr.finished_at_utc else None
     d["notes"] = json.loads(json.dumps(d.get("notes", {}), default=_serialize_dt))
     return d
 
@@ -106,16 +102,13 @@ def _apply_filters_df(df: pd.DataFrame, plan: PlannerPlan) -> pd.DataFrame:
         out = out[out["chat_type"].isin(f.chat_type)]
     if f.chat_id:
         if not f.account_id:
-            raise ValidationError(
-                "chat_id filter requires account_id filter (drilldown safety)."
-            )
+            raise ValidationError("chat_id filter requires account_id filter (drilldown safety).")
         out = out[out["chat_id"].isin(f.chat_id)]
     if f.has_tasks is not None:
         out = out[out["has_tasks"].fillna(0).astype(int) == (1 if f.has_tasks else 0)]
     if f.has_classifications is not None:
         out = out[
-            out["has_classifications"].fillna(0).astype(int)
-            == (1 if f.has_classifications else 0)
+            out["has_classifications"].fillna(0).astype(int) == (1 if f.has_classifications else 0)
         ]
     if f.has_both is not None:
         out = out[out["has_both"].fillna(0).astype(int) == (1 if f.has_both else 0)]
@@ -152,7 +145,7 @@ class LangGraphOrchestrator:
 
     def _build_graph(self):
         try:
-            from langgraph.graph import StateGraph, END  # type: ignore
+            from langgraph.graph import END, StateGraph  # type: ignore
         except Exception as e:
             raise RuntimeError(
                 "LangGraph is not installed. Install it (e.g., `pip install langgraph`) "
@@ -165,7 +158,7 @@ class LangGraphOrchestrator:
         # answer_text, verifier, dashboard_png, output_dir, evidence_dir, run_record_json
         sg = StateGraph(dict)
 
-        def node_init(state: Dict[str, Any]) -> Dict[str, Any]:
+        def node_init(state: dict[str, Any]) -> dict[str, Any]:
             run_id = uuid4().hex[:12]
             output_dir = _ensure_dir(str(Path(self.outputs_root) / run_id))
             evidence_dir = _ensure_dir(str(Path(output_dir) / "evidence"))
@@ -179,15 +172,13 @@ class LangGraphOrchestrator:
             )
             return state
 
-        def node_load_backend(state: Dict[str, Any]) -> Dict[str, Any]:
-            backend = CsvBackend(
-                csv_path=state["csv_path"], dataset_name=self.dataset_name
-            )
+        def node_load_backend(state: dict[str, Any]) -> dict[str, Any]:
+            backend = CsvBackend(csv_path=state["csv_path"], dataset_name=self.dataset_name)
             state["backend"] = backend
             state["dataset_version"] = backend.dataset_version
             return state
 
-        def node_plan(state: Dict[str, Any]) -> Dict[str, Any]:
+        def node_plan(state: dict[str, Any]) -> dict[str, Any]:
             if state.get("mode") != "ad_hoc":
                 return state
 
@@ -209,7 +200,7 @@ class LangGraphOrchestrator:
             state["plan"] = plan
             return state
 
-        def node_build_evidence(state: Dict[str, Any]) -> Dict[str, Any]:
+        def node_build_evidence(state: dict[str, Any]) -> dict[str, Any]:
             backend: CsvBackend = state["backend"]
             mode = state.get("mode")
 
@@ -235,7 +226,7 @@ class LangGraphOrchestrator:
             state["evidence"] = evidence
             return state
 
-        def node_dashboard(state: Dict[str, Any]) -> Dict[str, Any]:
+        def node_dashboard(state: dict[str, Any]) -> dict[str, Any]:
             if not state.get("build_dashboard", True):
                 state["dashboard_png"] = None
                 return state
@@ -249,12 +240,12 @@ class LangGraphOrchestrator:
             build_standard_daily_dashboard(
                 evidence=evidence,
                 out_path=out,
-                title=f"{'Standard Daily Report' if state.get('mode')=='button' else 'Ad-hoc Analysis'} — {state.get('report_day')}",
+                title=f"{'Standard Daily Report' if state.get('mode') == 'button' else 'Ad-hoc Analysis'} — {state.get('report_day')}",
             )
             state["dashboard_png"] = out
             return state
 
-        def node_answer(state: Dict[str, Any]) -> Dict[str, Any]:
+        def node_answer(state: dict[str, Any]) -> dict[str, Any]:
             mode = state.get("mode")
             use_llm = bool(state.get("use_llm_analyst", True))
             evidence: EvidencePack = state.get("evidence", {})
@@ -276,9 +267,7 @@ class LangGraphOrchestrator:
                     evidence=evidence,
                     mode="button" if mode == "button" else "ad_hoc",
                     user_text=(
-                        state.get("user_text", "")
-                        if mode == "ad_hoc"
-                        else "Standard daily report."
+                        state.get("user_text", "") if mode == "ad_hoc" else "Standard daily report."
                     ),
                 )
                 state["answer_text"] = analyst_res.answer_text
@@ -291,7 +280,7 @@ class LangGraphOrchestrator:
 
             return state
 
-        def node_verify(state: Dict[str, Any]) -> Dict[str, Any]:
+        def node_verify(state: dict[str, Any]) -> dict[str, Any]:
             evidence: EvidencePack = state.get("evidence", {})
             answer_text: str = state.get("answer_text", "")
 
@@ -302,12 +291,10 @@ class LangGraphOrchestrator:
                 )
                 return state
 
-            state["verifier"] = verify_numeric_fidelity(
-                answer_text=answer_text, evidence=evidence
-            )
+            state["verifier"] = verify_numeric_fidelity(answer_text=answer_text, evidence=evidence)
             return state
 
-        def node_persist(state: Dict[str, Any]) -> Dict[str, Any]:
+        def node_persist(state: dict[str, Any]) -> dict[str, Any]:
             output_dir = state["output_dir"]
             evidence_dir = state["evidence_dir"]
             evidence: EvidencePack = state.get("evidence", {})
@@ -345,9 +332,7 @@ class LangGraphOrchestrator:
                     if state.get("mode") == "button"
                     else getattr(state.get("plan"), "template_id", None)
                 ),
-                user_input=(
-                    state.get("user_text") if state.get("mode") == "ad_hoc" else None
-                ),
+                user_input=(state.get("user_text") if state.get("mode") == "ad_hoc" else None),
                 query_specs=[],
                 lineage=[],
                 artifacts=artifacts,
@@ -365,15 +350,11 @@ class LangGraphOrchestrator:
                     "dataset_version": state.get("dataset_version"),
                     "csv_path": os.path.abspath(state["csv_path"]),
                     "report_day": (
-                        state.get("report_day").isoformat()
-                        if state.get("report_day")
-                        else None
+                        state.get("report_day").isoformat() if state.get("report_day") else None
                     ),
                     "use_llm_analyst": bool(state.get("use_llm_analyst", True)),
                     "plan": (
-                        state.get("plan").model_dump()
-                        if state.get("plan") is not None
-                        else None
+                        state.get("plan").model_dump() if state.get("plan") is not None else None
                     ),
                     "evidence_tables": list(evidence.keys()) if evidence else [],
                 },

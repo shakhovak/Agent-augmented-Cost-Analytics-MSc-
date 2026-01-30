@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-
-EvidencePack = Dict[str, pd.DataFrame]
+EvidencePack = dict[str, pd.DataFrame]
 
 
 @dataclass(frozen=True)
@@ -173,9 +171,7 @@ def build_standard_daily_dashboard(
             width=widths.values,
             align="center",
         )
-        ax_hist.set_title(
-            "Distribution: Total Cost per Account (yesterday)", fontsize=12
-        )
+        ax_hist.set_title("Distribution: Total Cost per Account (yesterday)", fontsize=12)
         ax_hist.set_xlabel("total_cost_per_account (bins)")
         ax_hist.set_ylabel("count")
     else:

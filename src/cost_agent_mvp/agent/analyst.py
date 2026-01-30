@@ -4,13 +4,10 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Dict, Optional
-
-from dotenv import load_dotenv
 
 # Evidence pack type: dict[str, pandas.DataFrame]
 import pandas as pd
-
+from dotenv import load_dotenv
 from src.agent.prompt_loader import PromptLoader
 
 load_dotenv()
@@ -27,7 +24,7 @@ if not logger.handlers:
 logger.propagate = False
 
 
-EvidencePack = Dict[str, pd.DataFrame]
+EvidencePack = dict[str, pd.DataFrame]
 
 
 @dataclass(frozen=True)
@@ -50,9 +47,7 @@ def _env(key: str, default: str) -> str:
     return v.strip() if v and v.strip() else default
 
 
-def _compact_df(
-    df: pd.DataFrame, max_rows: int = 8, max_cols: int = 20
-) -> pd.DataFrame:
+def _compact_df(df: pd.DataFrame, max_rows: int = 8, max_cols: int = 20) -> pd.DataFrame:
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         return pd.DataFrame()
     cols = list(df.columns)[:max_cols]
@@ -152,7 +147,7 @@ class Analyst:
         mode: str = "button",
         user_text: str = "",
         charts_metadata: str = "",
-        model: Optional[str] = None,
+        model: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 900,
         max_rows_per_table: int = 8,

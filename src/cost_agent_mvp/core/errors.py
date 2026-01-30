@@ -1,6 +1,5 @@
 """Custom exceptions for the cost agent."""
 
-
 from __future__ import annotations
 
 

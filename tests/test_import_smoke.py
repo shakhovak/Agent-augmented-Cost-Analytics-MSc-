@@ -14,7 +14,6 @@ from __future__ import annotations
 import importlib
 from importlib import metadata
 
-
 # 1) PACKAGE_NAME = your import name (folder under src/)
 # Example: src/cost_agent_mvp/__init__.py  -> PACKAGE_NAME = "cost_agent_mvp"
 PACKAGE_NAME = "cost_agent_mvp"
@@ -53,6 +52,6 @@ def test_package_version_attribute_optional() -> None:
         # This is fine—version can be taken from importlib.metadata instead.
         return
 
-    value = getattr(module, "__version__")
+    value = module.__version__
     assert isinstance(value, str)
     assert value.strip() != ""

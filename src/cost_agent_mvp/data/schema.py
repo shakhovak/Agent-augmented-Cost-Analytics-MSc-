@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
-
 from src.core.errors import DataSourceError, ValidationError
 
 
@@ -22,11 +20,11 @@ class DatasetSchema:
     - 'date' is normalized to python datetime.date (daily grain).
     """
 
-    required_columns: Tuple[str, ...]
+    required_columns: tuple[str, ...]
     date_column: str = "date"
 
     # Optional: columns we will attempt to coerce to numeric if present
-    numeric_columns: Tuple[str, ...] = (
+    numeric_columns: tuple[str, ...] = (
         "cost_dialog",
         "cost_task",
         "total_cost_tasks",
@@ -38,7 +36,7 @@ class DatasetSchema:
     )
 
     # Optional: columns we will attempt to coerce to int if present
-    int_columns: Tuple[str, ...] = (
+    int_columns: tuple[str, ...] = (
         "account_id",
         "has_tasks",
         "has_classifications",
@@ -46,7 +44,7 @@ class DatasetSchema:
     )
 
     # Optional: columns we will coerce to string if present
-    str_columns: Tuple[str, ...] = (
+    str_columns: tuple[str, ...] = (
         "chat_id",
         "chat_type",
     )
@@ -81,8 +79,7 @@ def validate_columns(df: pd.DataFrame, schema: DatasetSchema) -> None:
     missing = [c for c in schema.required_columns if c not in df.columns]
     if missing:
         raise DataSourceError(
-            f"CSV is missing required columns: {missing}. "
-            f"Found columns: {list(df.columns)}"
+            f"CSV is missing required columns: {missing}. Found columns: {list(df.columns)}"
         )
 
 
@@ -96,9 +93,7 @@ def _parse_date_series(s: pd.Series) -> pd.Series:
     if dt.isna().any():
         bad_count = int(dt.isna().sum())
         examples = s[dt.isna()].astype(str).head(5).tolist()
-        raise ValidationError(
-            f"Failed to parse {bad_count} date values. Examples: {examples}"
-        )
+        raise ValidationError(f"Failed to parse {bad_count} date values. Examples: {examples}")
     return dt.dt.date
 
 
@@ -137,8 +132,8 @@ def coerce_types(df: pd.DataFrame, schema: DatasetSchema) -> pd.DataFrame:
 
 def load_csv(
     csv_path: str,
-    schema: Optional[DatasetSchema] = None,
-    usecols: Optional[Sequence[str]] = None,
+    schema: DatasetSchema | None = None,
+    usecols: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """
     Loads the CSV and validates/coerces according to schema.

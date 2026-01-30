@@ -5,29 +5,22 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
 from uuid import uuid4
 
 import pandas as pd
 import yaml
-
-from src.analytics.evidence_pack import build_standard_daily_evidence, EvidencePack
-from src.core.constants import SafetyLimits, TimeWindowType
-from src.core.errors import ConfigError, ValidationError
-from src.core.types import (
-    RunArtifacts,
-    RunRecord,
-    TimeWindow,
-)
-from src.core.utils_dates import parse_date, normalize_time_window
+from src.analytics.evidence_pack import EvidencePack, build_standard_daily_evidence
+from src.core.constants import SafetyLimits
+from src.core.errors import ConfigError
+from src.core.types import RunArtifacts, RunRecord
 from src.data.csv_backend import CsvBackend
 from src.reports.summary_generator import generate_daily_summary
 from src.viz.dashboard_builder import build_standard_daily_dashboard
 
 
-def _load_yaml(path: str) -> Dict:
+def _load_yaml(path: str) -> dict:
     p = Path(path)
     if not p.exists():
         raise ConfigError(f"Config file not found: {path}")
@@ -57,7 +50,7 @@ def run_standard_daily_report(
     dataset_name: str = "joint_costs_daily",
     report_templates_path: str = "configs/report_templates.yaml",
     template_id: str = "standard_daily_report",
-    limits: Optional[SafetyLimits] = None,
+    limits: SafetyLimits | None = None,
 ) -> RunArtifacts:
     """
     Orchestrator for the "Standard Daily Report" button.
@@ -80,9 +73,7 @@ def run_standard_daily_report(
     templates = cfg.get("templates") or {}
     tpl = templates.get(template_id)
     if not tpl:
-        raise ConfigError(
-            f"Template '{template_id}' not found in {report_templates_path}"
-        )
+        raise ConfigError(f"Template '{template_id}' not found in {report_templates_path}")
 
     constraints = tpl.get("constraints") or {}
     top_n = int(constraints.get("top_n", 10))
@@ -100,9 +91,7 @@ def run_standard_daily_report(
     evidence = build_standard_daily_evidence(
         df_all=backend.df,
         report_day=report_day,
-        trend_days=max(
-            2, min(7, max_days - 1) + 1
-        ),  # keep typical 7d, bounded by max_days
+        trend_days=max(2, min(7, max_days - 1) + 1),  # keep typical 7d, bounded by max_days
         top_n=top_n,
     )
 
@@ -169,7 +158,7 @@ def run_standard_daily_report(
     return artifacts
 
 
-def _run_record_to_json(rr: RunRecord) -> Dict:
+def _run_record_to_json(rr: RunRecord) -> dict:
     """
     Convert RunRecord (dataclasses) to JSON-serialisable dict.
     """
@@ -186,9 +175,7 @@ def _run_record_to_json(rr: RunRecord) -> Dict:
     d = asdict(rr)
     # dataclasses.asdict won't handle datetime/date; fix:
     d["started_at_utc"] = _serialize(rr.started_at_utc)
-    d["finished_at_utc"] = (
-        _serialize(rr.finished_at_utc) if rr.finished_at_utc else None
-    )
+    d["finished_at_utc"] = _serialize(rr.finished_at_utc) if rr.finished_at_utc else None
 
     # artifacts
     d["artifacts"]["run_id"] = rr.artifacts.run_id

@@ -1,12 +1,15 @@
 """Declarative chart spec objects (optional)."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any
 from enum import Enum
+from typing import Any
 
 
 class ChartType(Enum):
     """Chart types."""
+
     BAR = "bar"
     LINE = "line"
     PIE = "pie"
@@ -18,11 +21,11 @@ class ChartType(Enum):
 @dataclass
 class ChartSpec:
     """Specification for a chart."""
+
     chart_type: ChartType
     title: str
-    x_axis: Optional[str] = None
-    y_axis: Optional[List[str]] = None
-    data_source: Optional[str] = None
-    filters: Optional[Dict[str, Any]] = None
-    style: Optional[Dict[str, Any]] = None
-
+    x_axis: str | None = None
+    y_axis: list[str] | None = None
+    data_source: str | None = None
+    filters: dict[str, Any] | None = None
+    style: dict[str, Any] | None = None

@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-
 from src.agent.prompt_loader import PromptLoader
-
 
 # Same environment-loading approach as your attached script (load_dotenv) :contentReference[oaicite:1]{index=1}
 load_dotenv()
@@ -37,39 +34,39 @@ TimeWindowType = Literal["yesterday", "last_n_days", "range"]
 
 class TimeWindowModel(BaseModel):
     type: TimeWindowType
-    n_days: Optional[int] = None
-    start: Optional[str] = None  # YYYY-MM-DD
-    end: Optional[str] = None  # YYYY-MM-DD
+    n_days: int | None = None
+    start: str | None = None  # YYYY-MM-DD
+    end: str | None = None  # YYYY-MM-DD
 
 
 class FiltersModel(BaseModel):
-    account_id: Optional[List[int]] = None
-    chat_type: Optional[List[str]] = None
-    chat_id: Optional[List[str]] = None
-    has_tasks: Optional[bool] = None
-    has_classifications: Optional[bool] = None
-    has_both: Optional[bool] = None
+    account_id: list[int] | None = None
+    chat_type: list[str] | None = None
+    chat_id: list[str] | None = None
+    has_tasks: bool | None = None
+    has_classifications: bool | None = None
+    has_both: bool | None = None
 
 
 class ChartModel(BaseModel):
     id: str
     type: str
     table: str
-    x: Optional[str] = None
-    y: Optional[Any] = None  # str or list[str]
-    label: Optional[str] = None
-    value: Optional[str] = None
-    title: Optional[str] = None
+    x: str | None = None
+    y: Any | None = None  # str or list[str]
+    label: str | None = None
+    value: str | None = None
+    title: str | None = None
 
 
 class OutputsModel(BaseModel):
-    evidence_tables: List[str] = Field(default_factory=list)
-    charts: List[ChartModel] = Field(default_factory=list)
+    evidence_tables: list[str] = Field(default_factory=list)
+    charts: list[ChartModel] = Field(default_factory=list)
 
 
 class IntentModel(BaseModel):
     question: str
-    assumptions: List[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
 
 
 class ConstraintsModel(BaseModel):
@@ -81,20 +78,18 @@ class ConstraintsModel(BaseModel):
 class PlannerPlan(BaseModel):
     status: Literal["OK", "UNSUPPORTED"]
     mode: Literal["button", "ad_hoc"] = "ad_hoc"
-    template_id: Optional[str] = None
+    template_id: str | None = None
 
-    time_window: TimeWindowModel = Field(
-        default_factory=lambda: TimeWindowModel(type="yesterday")
-    )
+    time_window: TimeWindowModel = Field(default_factory=lambda: TimeWindowModel(type="yesterday"))
     filters: FiltersModel = Field(default_factory=FiltersModel)
     intent: IntentModel
 
     outputs: OutputsModel = Field(default_factory=OutputsModel)
     constraints: ConstraintsModel = Field(default_factory=ConstraintsModel)
 
-    reason: Optional[str] = None
-    suggested_template: Optional[str] = None
-    suggested_plan: Optional[Dict[str, Any]] = None
+    reason: str | None = None
+    suggested_template: str | None = None
+    suggested_plan: dict[str, Any] | None = None
 
 
 # -----------------------------
@@ -141,7 +136,7 @@ class Planner:
         user_text: str,
         semantic_layer_yaml: str,
         report_templates_yaml: str = "",
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         bundle = self.loader.load_and_render(
             "planner",
             user_vars={
@@ -161,7 +156,7 @@ class Planner:
         user_text: str,
         semantic_layer_yaml: str,
         report_templates_yaml: str = "",
-        model: Optional[str] = None,
+        model: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 800,
     ) -> PlannerPlan:
@@ -171,9 +166,7 @@ class Planner:
         This follows the same structured parsing pattern you use elsewhere :contentReference[oaicite:3]{index=3},
         but adapted to this repo and schema.
         """
-        messages = self.build_messages(
-            user_text, semantic_layer_yaml, report_templates_yaml
-        )
+        messages = self.build_messages(user_text, semantic_layer_yaml, report_templates_yaml)
         chosen_model = model or _get_env(self.model_env, self.default_model)
 
         client = _get_openai_client()
@@ -191,9 +184,7 @@ class Planner:
 
             # Basic sanity fallback: ensure charts/tables exist for OK responses
             if plan_obj.status == "OK" and not plan_obj.outputs.evidence_tables:
-                logger.info(
-                    "Planner returned OK but no evidence_tables; adding minimal default."
-                )
+                logger.info("Planner returned OK but no evidence_tables; adding minimal default.")
                 plan_obj.outputs.evidence_tables = [
                     "kpi_today_vs_yesterday",
                     "top_accounts_by_total_cost",
