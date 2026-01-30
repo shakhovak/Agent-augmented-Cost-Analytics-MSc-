@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pandas as pd
+
 from src.core.errors import DataSourceError, ValidationError
 
 

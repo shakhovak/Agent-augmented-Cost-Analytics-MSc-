@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
+
 from src.agent.prompt_loader import PromptLoader
 
 # Same environment-loading approach as your attached script (load_dotenv) :contentReference[oaicite:1]{index=1}

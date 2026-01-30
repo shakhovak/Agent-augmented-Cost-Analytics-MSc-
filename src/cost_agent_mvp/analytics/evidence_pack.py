@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import pandas as pd
+
 from src.analytics.kpi_definitions import (
     active_users,
     avg_cost_per_account_diluted,
