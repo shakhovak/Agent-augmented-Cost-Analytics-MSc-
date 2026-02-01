@@ -12,13 +12,13 @@ from uuid import uuid4
 import pandas as pd
 import yaml
 
-from src.analytics.evidence_pack import EvidencePack, build_standard_daily_evidence
-from src.core.constants import SafetyLimits
-from src.core.errors import ConfigError
-from src.core.types import RunArtifacts, RunRecord
-from src.data.csv_backend import CsvBackend
-from src.reports.summary_generator import generate_daily_summary
-from src.viz.dashboard_builder import build_standard_daily_dashboard
+from cost_agent_mvp.analytics.evidence_pack import EvidencePack, build_standard_daily_evidence
+from cost_agent_mvp.core.constants import SafetyLimits
+from cost_agent_mvp.core.errors import ConfigError
+from cost_agent_mvp.core.types import RunArtifacts, RunRecord
+from cost_agent_mvp.data.csv_backend import CsvBackend
+from cost_agent_mvp.reports.summary_generator import generate_daily_summary
+from cost_agent_mvp.viz.dashboard_builder import build_standard_daily_dashboard
 
 
 def _load_yaml(path: str) -> dict:

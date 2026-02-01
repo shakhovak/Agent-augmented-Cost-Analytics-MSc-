@@ -20,7 +20,7 @@ from aiogram.types import (
 )
 from dotenv import load_dotenv
 
-from src.agent.orchestrator import Orchestrator
+from cost_agent_mvp.agent.orchestrator import Orchestrator
 
 # -----------------------------
 # Config / Logging
