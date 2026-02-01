@@ -25,3 +25,8 @@ pre-commit run --all-files
 ## Quickstart
 
 # Outputs /Runs
+
+## Development workflow
+
+- [Dev workflow](docs/dev_workflow.md)
+- [Iteration checklist](docs/iteration_checklist.md)
