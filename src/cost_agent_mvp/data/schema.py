@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from src.core.errors import DataSourceError, ValidationError
+from cost_agent_mvp.core.errors import DataSourceError, ValidationError
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,7 @@ from collections.abc import Iterable
 import numpy as np
 import pandas as pd
 
-from src.core.errors import ValidationError
+from cost_agent_mvp.core.errors import ValidationError
 
 # -----------------------------
 # Helpers

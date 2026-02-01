@@ -13,20 +13,20 @@ import pandas as pd
 import yaml
 from dotenv import load_dotenv
 
-from src.agent.analyst import Analyst
-from src.agent.planner import Planner, PlannerPlan
-from src.agent.verifier import (
+from cost_agent_mvp.agent.analyst import Analyst
+from cost_agent_mvp.agent.planner import Planner, PlannerPlan
+from cost_agent_mvp.agent.verifier import (
     VerifierResult,
     verifier_result_to_json,
     verify_numeric_fidelity,
 )
-from src.analytics.evidence_pack import EvidencePack, build_standard_daily_evidence
-from src.core.errors import ConfigError, ValidationError
-from src.core.types import RunArtifacts, RunRecord
-from src.core.utils_dates import parse_date
-from src.data.csv_backend import CsvBackend
-from src.reports.summary_generator import generate_daily_summary
-from src.viz.dashboard_builder import build_standard_daily_dashboard
+from cost_agent_mvp.analytics.evidence_pack import EvidencePack, build_standard_daily_evidence
+from cost_agent_mvp.core.errors import ConfigError, ValidationError
+from cost_agent_mvp.core.types import RunArtifacts, RunRecord
+from cost_agent_mvp.core.utils_dates import parse_date
+from cost_agent_mvp.data.csv_backend import CsvBackend
+from cost_agent_mvp.reports.summary_generator import generate_daily_summary
+from cost_agent_mvp.viz.dashboard_builder import build_standard_daily_dashboard
 
 load_dotenv()
 

@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 
-from src.analytics.kpi_definitions import (
+from cost_agent_mvp.analytics.kpi_definitions import (
     active_users,
     avg_cost_per_account_diluted,
     avg_cost_per_account_non_diluted,
@@ -18,7 +18,7 @@ from src.analytics.kpi_definitions import (
     per_account_total_cost,
     total_cost_sum,
 )
-from src.core.errors import ValidationError
+from cost_agent_mvp.core.errors import ValidationError
 
 # Evidence pack is a dict[str, DataFrame]
 EvidencePack = dict[str, pd.DataFrame]

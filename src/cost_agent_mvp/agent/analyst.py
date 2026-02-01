@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import pandas as pd
 from dotenv import load_dotenv
 
-from src.agent.prompt_loader import PromptLoader
+from cost_agent_mvp.agent.prompt_loader import PromptLoader
 
 load_dotenv()
 
