@@ -33,6 +33,7 @@ class DatasetSchema:
         "cost_qc",
         "cost_check_list",
         "total_cost_classifications",
+        "cost_amocrm_call",
         "total_cost",
     )
 
@@ -42,6 +43,11 @@ class DatasetSchema:
         "has_tasks",
         "has_classifications",
         "has_both",
+        "num_services",
+        "has_all_three",
+        "has_only_classifications",
+        "has_1_service",
+        "has_2_services",
     )
 
     # Optional: columns we will coerce to string if present
@@ -68,7 +74,10 @@ def default_joint_schema() -> DatasetSchema:
         "cost_qc",
         "cost_check_list",
         "total_cost_classifications",
+        "cost_amocrm_call",
+        "has_amocrm_call",
         "total_cost",
+        "num_services",
         "has_tasks",
         "has_classifications",
         "has_both",
@@ -116,12 +125,44 @@ def coerce_types(df: pd.DataFrame, schema: DatasetSchema) -> pd.DataFrame:
     # Numeric coercion
     for c in schema.numeric_columns:
         if c in out.columns:
-            out[c] = pd.to_numeric(out[c], errors="coerce")
+            before = out[c]
+            converted = pd.to_numeric(before, errors="coerce")
+
+            bad = before.notna() & converted.isna()
+            if bad.any():
+                examples = list(
+                    zip(
+                        out.index[bad].astype(int)[:5],
+                        before[bad].astype(str).head(5).tolist(),
+                        strict=True,
+                    )
+                )
+                raise ValidationError(
+                    f"Column '{c}' has non-numeric values. Examples (row,value): {examples}"
+                )
+
+            out[c] = converted.astype("float64")
 
     # Int coercion
     for c in schema.int_columns:
         if c in out.columns:
-            out[c] = pd.to_numeric(out[c], errors="coerce").astype("Int64")
+            before = out[c]
+            converted = pd.to_numeric(before, errors="coerce")
+
+            bad = before.notna() & converted.isna()
+            if bad.any():
+                examples = list(
+                    zip(
+                        out.index[bad].astype(int)[:5],
+                        before[bad].astype(str).head(5).tolist(),
+                        strict=True,
+                    )
+                )
+                raise ValidationError(
+                    f"Column '{c}' has non-integer values. Examples (row,value): {examples}"
+                )
+
+            out[c] = converted.astype("Int64")
 
     # String coercion
     for c in schema.str_columns:
