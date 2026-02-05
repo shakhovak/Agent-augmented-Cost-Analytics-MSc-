@@ -19,17 +19,14 @@ Typical contents:
 - `generator.py` — CLI entry point for dataset generation
 - `service_costs.py` — service adoption/retention schedules + usage calendar + cost assignment logic
 - `users_activity.py` — analysis helpers / sanity-check scripts (plots, growth/retention/activity summaries)
-- `joint_info_2025.csv` — generated output (usually git-ignored)
+- `joint_info_2025.csv` — generated output (git-ignored)
 - `samples/` — optional small outputs for quick inspection
-
-> Tip: keep generated CSVs out of version control. Commit only configs + code + a tiny sample if needed.
 
 ---
 
 ## Quickstart
 
 Run from the **repo root**.
-
 ### 1) Generate a small sample (fast)
 
 ```bash
@@ -44,56 +41,6 @@ python -m data.generator --config data/config_data_generator.yaml
 The output path is controlled by output.path in the config.
 
 CLI arguments can override YAML for quick experiments. YAML remains the authoritative source of modelling assumptions used in the dissertation.
-
-
-# Data folder — synthetic dataset generation
-
-This folder contains the **synthetic data generator** used in the dissertation.
-It produces a joint “usage-cost” dataset that mimics a subscription AI platform’s operational metadata (accounts, chats, daily activity, service usage, and costs) **without using any real organisational data**.
-
-The generator is designed to be:
-- **Reproducible** (same config + seed → identical output)
-- **Config-driven** (all modelling assumptions live in YAML)
-- **Compatible with the analytics pipeline** (schema/type coercion + required columns)
-
----
-
-## Folder layout
-
-Typical contents:
-
-- `config_data_generator.yaml` — **main configuration** (single source of truth; used as Appendix in the dissertation)
-- `samples/sample_config.yaml` — small config for quick local runs and tests
-- `generator.py` — CLI entry point for dataset generation
-- `service_costs.py` — service adoption/retention schedules + usage calendar + cost assignment logic
-- `users_activity.py` — analysis helpers / sanity-check scripts (plots, growth/retention/activity summaries)
-- `joint_info_2025.csv` — generated output (usually git-ignored)
-- `samples/` — optional small outputs for quick inspection
-
-> Tip: keep generated CSVs out of version control. Commit only configs + code + a tiny sample if needed.
-
----
-
-## Quickstart
-
-Run from the **repo root**.
-
-### 1) Generate a small sample (fast)
-
-```bash
-python -m data.generator --config data/samples/sample_config.yaml
-````
-
-### 2) Generate the full dataset (slower)
-
-```bash
-python -m data.generator --config data/config_data_generator.yaml
-```
-
-The output path is controlled by `output.path` in the config.
-By default it writes something like:
-
-* `data/joint_info_2025.csv`
 
 ---
 
@@ -151,47 +98,6 @@ This is critical for:
 
 ---
 
-## Sanity checks (recommended)
-
-After generation, run a few quick checks in Python:
-
-```python
-import pandas as pd
-
-df = pd.read_csv("data/joint_info_2025.csv")
-
-print("shape:", df.shape)
-print("date range:", df["date"].min(), "→", df["date"].max())
-print("num_services distribution:")
-print(df["num_services"].value_counts(normalize=True).sort_index())
-```
-
-### “New clients per day” (correct definition)
-
-When plotting “daily new clients”, define **new client** as:
-
-> an account whose **first ever** service use date is that day
-
-Example for one service:
-
-```python
-import pandas as pd
-
-df = pd.read_csv("data/joint_info_2025.csv")
-df["date"] = pd.to_datetime(df["date"])
-
-feature_col = "has_tasks"  # or has_classifications / has_amocrm_call
-feature_df = df[df[feature_col] == 1]
-
-first_use = feature_df.groupby("account_id")["date"].min()
-daily_new = first_use.value_counts().sort_index()
-
-print("total adopters:", first_use.shape[0])
-print("sum daily new:", daily_new.sum())
-```
-
----
-
 ## How to tune the generator (main knobs)
 
 Most tuning happens in `config_data_generator.yaml`.
@@ -207,71 +113,74 @@ Most tuning happens in `config_data_generator.yaml`.
 | Heavier-tailed costs / more variance         | `services.cost_when_used.*.sigma`, `services.cost_when_used.*.max`                       |
 | More multi-service days (bundling)           | planned next step: add service correlation rules (not enabled by default)                |
 
-**Practical tuning workflow:**
-
-1. generate sample config (fast)
-2. inspect:
-
-   * adopters totals per service
-   * service-days counts
-   * `num_services` distribution
-3. adjust 1–2 knobs, rerun
-4. only then run full config
-
 ---
 
-## Ethics / data handling note
+## Anomaly injection (M1-06)
 
-* The dissertation uses **only synthetic data** (no PII, no customer content, no organisational logs).
-* It is safe to publish:
+This project supports injecting controlled anomalies into the synthetic dataset and producing **ground-truth labels** (JSONL) for evaluation.
 
-  * generator code
-  * YAML configs
-  * scenario definitions / evaluation scripts
-  * small sample synthetic datasets
-* Do **not** commit large generated outputs unless explicitly intended.
+### Outputs
 
----
+Running the injector produces:
 
-## Troubleshooting
+- `data/sample_with_anomalies.csv` — synthetic dataset with injected anomalies
+- `data/labels.jsonl` — ground-truth anomaly events (one JSON object per line)
 
-### YAML parse errors
+Large generated outputs should not be committed to git. You may commit a small sample for demos/tests.
 
-If you see errors like:
+### 1) Generate base synthetic dataset
 
-* `yaml.scanner.ScannerError: mapping values are not allowed here`
+Generate the base dataset (normal behavior) first:
 
-It usually means indentation or `:` formatting. Recheck the line number printed by the error.
-
-### KeyError: missing config section
-
-Example:
-
-* `KeyError: 'services_usage_days'`
-
-Your config is missing a required top-level block. Compare against `config_data_generator.yaml`.
-
-### `UnboundLocalError: cannot access local variable 'np'`
-
-Make sure the module has `import numpy as np` at the top and you didn’t shadow `np` inside a function.
-
-### Generation is slow
-
-* Use the sample config first.
-* Ensure tqdm progress bars are enabled where loops are large.
-* If needed, reduce `accounts.n_accounts` or shorten the date range temporarily.
-
----
-
-## Command reference
-
-```bash
-# Generate sample dataset
-python -m data.generator --config data/samples/sample_config.yaml
-
-# Generate full dataset
-python -m data.generator --config data/config_data_generator.yaml
-```
+```powershell
+python data/generator.py --config config_data_generator.yaml --output data/sample.csv
 
 ```
+If you run the generator without CLI overrides, it will follow the config file defaults (e.g., full-year 2025, `n_accounts=3000`).
+
+### 2) Inject anomalies + produce labels
+
+Inject anomalies defined in `configs/anomaly_scenarios.yaml`:
+
+```powershell
+python scripts/inject_anomalies.py `
+  --input data/sample.csv `
+  --config configs/anomaly_scenarios.yaml `
+  --output data/sample_with_anomalies.csv `
+  --labels data/labels.jsonl
 ```
+
+The injection is **reproducible**: given the same base dataset + scenario config + seeds, the outputs are deterministic.
+
+### 3) Scenario configuration
+
+Anomaly scenarios are stored in:
+
+* `configs/anomaly_scenarios.yaml`
+
+Each scenario defines:
+
+* `scenario_id`, `anomaly_type`
+* `seed` (controls deterministic account selection / row updates)
+* `account_selection` (e.g., `random_k`)
+* `window` (`start_date`, `duration_days`)
+* `params` (type-specific parameters like `magnitude` or `exceed_by`)
+* `driver_template` (human-readable explanation template)
+
+Supported anomaly types (v0):
+
+* `cost_spike` — unit-cost spike (e.g., dialog/task component cost multiplier)
+* `volume_spike` — usage spike (e.g., `n_tasks` increases and cost scales)
+* `cap_spike` — concurrent chat cap violation (adds extra chat rows per account-day)
+
+### 4) Labels format (JSONL)
+
+`data/labels.jsonl` contains one JSON object per anomaly event with (minimum) fields:
+
+* `event_id`
+* `scenario_id`
+* `seed`
+* `anomaly_type`
+* `affected_services` (JSON list)
+* `start_date`, `end_date` (ISO dates)
+* `driver_template`
