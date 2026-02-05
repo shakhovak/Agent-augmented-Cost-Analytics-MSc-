@@ -1,0 +1,334 @@
+# =============================================================================
+# Synthetic data generator config (self-explaining)
+# Purpose:
+# - Reproducible synthetic operational logs for usage/cost analytics.
+# - Mimics real platform behaviour WITHOUT using any organisational data.
+# - Parameters here are intentionally interpretable (business knobs).
+#
+# Notes:
+# - "account_id" is an organisation/customer tenant (synthetic).
+# - "chat_id" approximates an end-customer chat under that tenant (synthetic).
+# - Step 1 creates "active chat-days" (sparse activity + seasonality).
+# - Step 2 creates adoption + churn schedules per service (retention targets).
+# - Step 3 assigns service usage + costs onto chat-days.
+# =============================================================================
+
+dataset:
+  # Time horizon for the synthetic dataset.
+  # Use a contiguous period so seasonality and churn can be evaluated cleanly.
+  start_date: "2025-01-01"
+  end_date: "2025-12-31"
+
+  # Random seed for determinism:
+  # same config + same seed => identical dataset (important for experiments).
+  seed: 42
+
+
+accounts:
+  # Number of synthetic tenants/accounts to simulate.
+  # This drives both dataset scale and the total possible adopters.
+  n_accounts: 3000
+
+  # Generate account IDs as unique integers in a realistic-looking range.
+  # Rationale: avoids collisions and has no link to real entities.
+  account_id_min: 10000000
+  account_id_max: 28000000
+
+
+chats:
+  # Max concurrently "known" chats per account in the simulation.
+  # We cap this to prevent unbounded growth while still allowing variety.
+  max_concurrent_per_account: 50
+
+  # chat_id format: numeric string with a fixed number of digits.
+  # Rationale: matches typical CRM/external ID patterns and is easy to validate.
+  chat_id_digits: 11
+
+  # Chat channels/types (categorical).
+  # Here we keep it simple: random draw from a plausible list.
+  chat_types:
+    - whatsapp
+    - telegram
+    - instagram
+    - avito
+    - vk
+    - max
+    - viber
+
+
+chat_lifecycle:
+  # -----------------------------
+  # STEP 1: chat pool evolution
+  # -----------------------------
+  # We model chat relationships as entities that can appear (arrive), remain active
+  # for a while (lifetime), churn (expire), and rarely reactivate.
+  #
+  # Why these choices:
+  # - Poisson arrivals: standard for discrete independent arrivals.
+  # - Geometric lifetimes: simple survival process with long tail.
+  # - Reactivation: tiny probability to mimic occasional returns.
+
+  initial_active_chats_per_account:
+    # Warm start: avoid "empty early months".
+    # Each account begins with some active chats.
+    dist: "poisson"
+    mean: 12
+    min: 1
+    max: 50
+
+  # Turn lifecycle on/off (useful for ablations).
+  enabled: true
+
+  # New chats created per account per day.
+  # Poisson(λ) where λ is this value (optionally later modulated by seasonality).
+  new_chats_lambda_per_account_day: 0.27  # avg 0.6/month/account
+
+  lifetime:
+    # How long a chat stays in the active pool before expiring.
+    # Geometric(mean_days) yields many short-lived + some long-lived chats.
+    dist: "geometric"
+    mean_days: 45
+
+  # Optional: chats can reactivate after expiring (rare).
+  reactivation_prob: 0.002  # optional, can be 0
+
+
+activity:
+  # -----------------------------
+  # STEP 1: daily active subset
+  # -----------------------------
+  # Given a pool of currently "active" chats for an account (size M),
+  # we decide how many chats are observed/active today (K).
+  #
+  # Mechanism:
+  # - With probability p_full_day: K = M (rare "all-chats active" bursts)
+  # - Otherwise: K ~ Binomial(M, q_t)
+  # Where q_t is seasonality-adjusted and clipped.
+
+  # Probability of "all chats active today" for an account (rare)
+  p_full_day: 0.03
+
+  # Otherwise: K ~ Binomial(M, q_t)
+  # base_q is the baseline probability that any given chat is active today.
+  base_q: 0.20
+  # Clip q_t to avoid extreme behaviour (never-active or always-active).
+  q_clip_min: 0.01
+  q_clip_max: 0.95
+
+  # Day-of-week activity multipliers (simple, interpretable seasonality).
+  # Rationale: weekends lower activity.
+  dow_multiplier:
+    Mon: 1.00
+    Tue: 1.05
+    Wed: 1.10
+    Thu: 1.05
+    Fri: 1.00
+    Sat: 0.70
+    Sun: 0.60
+
+  # Month multipliers for seasonality (summer dip).
+  # Rationale: business activity typically drops in summer months.
+  month_multiplier:
+    1: 1.00
+    2: 1.05
+    3: 1.10
+    4: 1.05
+    5: 1.00
+    6: 0.85
+    7: 0.75
+    8: 0.80
+    9: 0.95
+    10: 1.00
+    11: 1.05
+    12: 0.95
+
+  # Chat popularity heterogeneity:
+  # each chat has a persistent weight; weights ~ LogNormal(0, sigma).
+  # Rationale: "few frequent chats, many rare chats".
+  chat_popularity_lognorm_sigma: 1.0
+
+
+services_usage_days:
+  # -----------------------------
+  # STEP 3a: which days a service is used ("service-days")
+  # -----------------------------
+  # For each adopter, we choose which days in their available window
+  # (adoption_date..churn_date) they are active on the service.
+  #
+  # We sample number of active days via Negative Binomial:
+  #   n_active_days ~ NB(mean_active_days, dispersion_k)
+  # then select specific days weighted by (seasonality * intensity).
+  #
+  # Rationale:
+  # - NB adds over-dispersion (some users far more active than average).
+  # - weight-based day selection injects weekend/summer structure naturally.
+
+  # Reference window used when scaling expectations to different window lengths.
+  reference_window_days: 100
+
+  # Expected number of active days per adopter over their lifetime window.
+  # Increase these to make users active on more days.
+  mean_active_days:
+    tasks: 50
+    classifications: 60
+    amocrm_call: 80
+
+  # Dispersion for NB: higher => less variance (closer to Poisson).
+  # Lower => heavier tail (more super-active users).
+  dispersion_k:
+    tasks: 8
+    classifications: 8
+    amocrm_call: 6
+
+  # Optional: dialog can be “always possible” (not gated by adoption),
+  # but still sparse via the same NB scheduling.
+  dialog:
+    mean_active_days: 20
+    dispersion_k: 12
+
+
+services_event_volume:
+  # -----------------------------
+  # STEP 3b: event counts per active service-day
+  # -----------------------------
+  # On a day when the service is active for an account, we need
+  # number of events:
+  # - tasks: number of tasks created
+  # - classifications: number of dialogs classified
+  # - amocrm_call: number of calls processed
+  #
+  # We use NB again for "events/day" because volume tends to be heavy-tailed.
+
+  mean_events_per_active_day:
+    tasks: 30
+    classifications: 60
+    amocrm_call: 40
+
+  dispersion_k:
+    tasks: 10
+    classifications: 10
+    amocrm_call: 8
+
+
+services:
+  # -----------------------------
+  # STEP 3c: cost model (current implementation)
+  # -----------------------------
+  # This is a pragmatic approximation:
+  # cost_when_used defines a positive cost distribution for a used service-day:
+  #
+  # cost = min + LogNormal(mu, sigma), clipped to [min, max]
+  #
+  # We choose lognormal because costs are:
+  # - strictly positive
+  # - right-skewed with rare high values
+  # and min/max allow matching empirical boxplots.
+
+  cost_when_used:
+    dialog: {min: 2.0,  max: 42.0,  median: 2.0,  sigma: 0.35}
+    tasks: {min: 2.0,  max: 109.0, median: 5.0,  sigma: 0.70}
+    classifications: {min: 3.0, max: 385.0, median: 17.0, sigma: 0.35}
+    amocrm_call: {min: 1.0, max: 154.0, median: 4.0,  sigma: 0.90}
+
+
+services_model:
+  # -----------------------------
+  # STEP 2: adoption + churn (retention) + business rules
+  # -----------------------------
+  # We model who adopts which paid service, when they churn, and heterogeneity.
+  #
+  # Key idea:
+  # - New adopters follow monthly targets (business planning knob).
+  # - Adoption days within a month are biased to the first half.
+  # - Retention is controlled by interpretable checkpoints r30/r60/r90.
+  # - Post90 churn adds a long tail.
+
+  # Launch dates per service (no adoption before launch).
+  launch_dates:
+    tasks: "2025-02-01"
+    classifications: "2025-01-01"
+    amocrm_call: "2025-02-01"
+    dialog: "2025-01-01"
+
+  # Free trial length (days). During trial churn is disabled.
+  trial_days: 7
+
+  # Probability a trial user converts into a paying user.
+  # Higher => longer windows (more activity).
+  p_convert_after_trial:
+    tasks: 0.8
+    classifications: 0.85
+    amocrm_call: 0.90
+
+  # Monthly new adopters (targets).
+  # These are per-service counts; totals across the year are approximately:
+  # (months after launch) × value, capped by n_accounts.
+  new_adopters_per_month:
+    tasks: 40
+    classifications: 160
+    amocrm_call: 200
+
+  # Bias adopters toward early days of month.
+  adoption_day_bias:
+    type: "exp_decay"
+    alpha: 0.10         # higher => stronger “first half” concentration
+
+  # Retention targets (survival probability):
+  # r30 = share still active at day 30 since adoption (after trial),
+  # r60 = share still active at day 60,
+  # r90 = share still active at day 90.
+  #
+  # Code converts these into piecewise daily churn hazards:
+  # 0–30, 31–60, 61–90, and then 91+ uses post90_daily_churn.
+  retention_targets:
+    tasks:            { r30: 0.85, r60: 0.60, r90: 0.45 }
+    classifications:  { r30: 0.80, r60: 0.55, r90: 0.40 }
+    amocrm_call:      { r30: 0.75, r60: 0.55, r90: 0.45 }
+
+  # After day 90, churn becomes a constant daily probability (long tail).
+  # Smaller values => more long-lived users.
+  post90_daily_churn:
+    tasks: 0.010
+    classifications: 0.008
+    amocrm_call: 0.001
+
+  # (Optional / next step) Events × duration-based cost model scaffold.
+  # If you later switch from "cost_when_used" to true usage pricing,
+  # these parameters allow: cost = base_fee + per_sec * total_duration.
+  usage:
+    # Base event rates per account-day (used if you model events directly
+    # from Poisson instead of NB mean_events_per_active_day).
+    base_event_rate_per_day:
+      dialog: 0.6
+      tasks: 0.25
+      classifications: 1.2
+      amocrm_call: 0.15
+
+    # Duration distribution per event (seconds), lognormal.
+    # Rationale: durations are positive and right-skewed.
+    duration_lognorm:
+      dialog: {median_sec: 25, sigma: 0.35}
+      tasks: {median_sec: 80, sigma: 0.55}
+      classifications: {median_sec: 35, sigma: 0.35}
+      amocrm_call: {median_sec: 140, sigma: 0.85}
+
+    # Pricing parameters:
+    # base_fee = fixed per-day or per-batch fee,
+    # per_sec = variable rate per second,
+    # min/max clip to keep bounds consistent with boxplots.
+    pricing:
+      dialog: {base_fee: 2.0, per_sec: 0.010, min: 2.0, max: 42.0}
+      tasks: {base_fee: 2.0, per_sec: 0.015, min: 2.0, max: 109.0}
+      classifications: {base_fee: 3.0, per_sec: 0.020, min: 3.0, max: 385.0}
+      amocrm_call: {base_fee: 1.0, per_sec: 0.008, min: 1.0, max: 154.0}
+
+  # How to distribute account-day usage across that day's active chat rows.
+  # "one_chat" keeps the table compact: all service-day cost is assigned to
+  # one randomly chosen active chat row for that account-day.
+  distribute_to_chats:
+    mode: "one_chat"
+
+
+output:
+  # Output path for the generated joint dataset.
+  path: "data/joint_info_2025.csv"
