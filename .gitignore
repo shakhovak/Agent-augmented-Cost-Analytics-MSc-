@@ -57,6 +57,7 @@ logs/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
+!data/*.ipynb
 
 # Internal notes
 NOTES.md

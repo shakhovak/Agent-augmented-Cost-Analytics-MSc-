@@ -115,7 +115,7 @@ Most tuning happens in `config_data_generator.yaml`.
 
 ---
 
-## Anomaly injection (M1-06)
+## Anomaly injection
 
 This project supports injecting controlled anomalies into the synthetic dataset and producing **ground-truth labels** (JSONL) for evaluation.
 
