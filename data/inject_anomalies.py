@@ -1,3 +1,10 @@
+"""Inject configurable anomalies into synthetic cost data and emit JSONL labels.
+
+Supports cost_spike (multiply cost components), volume_spike (scale counts and costs),
+and cap_spike (add rows above max_concurrent and optionally scale costs).
+Scenario config is read from a YAML file; see data/anomaly_scenarios.yaml.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -26,16 +33,50 @@ except Exception:  # pragma: no cover
         return x
 
 
+# Cost columns used when applying "all" components (cost_spike or cap_spike cost bump).
+COST_COLUMNS = [
+    "cost_dialog",
+    "cost_task",
+    "cost_classification",
+    "cost_qc",
+    "cost_check_list",
+    "cost_amocrm_call",
+]
+
+# Columns zeroed on synthetic rows added by cap_spike (so new rows don't double-count).
+CAP_SPIKE_ZERO_COLUMNS = [
+    "cost_dialog",
+    "cost_task",
+    "total_cost_tasks",
+    "cost_classification",
+    "cost_qc",
+    "cost_check_list",
+    "total_cost_classifications",
+    "cost_amocrm_call",
+    "total_cost",
+    "has_tasks",
+    "has_classifications",
+    "has_amocrm_call",
+    "num_services",
+    "has_both",
+    "n_tasks",
+    "n_classifications",
+    "n_amocrm_calls",
+]
+
+
 # ---------------------------
 # Helpers
 # ---------------------------
 
 
 def _parse_date(s: str) -> date:
+    """Parse ISO date string."""
     return date.fromisoformat(s)
 
 
 def _date_range(start: date, duration_days: int) -> tuple[date, date]:
+    """Return (start, end) inclusive for the given duration."""
     if duration_days <= 0:
         raise ValueError("duration_days must be positive.")
     end = start + timedelta(days=duration_days - 1)
@@ -47,6 +88,7 @@ def _select_accounts(
     cfg: dict[str, Any],
     rng: np.random.Generator,
 ) -> list[int]:
+    """Select account IDs per config: 'all' or 'random_k'."""
     mode = cfg.get("mode", "random_k")
     if mode == "all":
         return [int(x) for x in account_ids]
@@ -166,6 +208,7 @@ def _apply_cost_spike(
         "tasks": ["cost_task"],
         "classifications": ["cost_classification", "cost_qc", "cost_check_list"],
         "amocrm_call": ["cost_amocrm_call"],
+        "all": COST_COLUMNS,
     }
     if component not in field_map:
         raise ValueError(f"Unsupported cost_spike component: {component}")
@@ -213,11 +256,18 @@ def _apply_volume_spike(
             ["cost_classification", "cost_qc", "cost_check_list"],
         ),
         "amocrm_call": ("n_amocrm_calls", ["cost_amocrm_call"]),
+        "all": [
+            ("n_tasks", ["cost_task"]),
+            ("n_classifications", ["cost_classification", "cost_qc", "cost_check_list"]),
+            ("n_amocrm_calls", ["cost_amocrm_call"]),
+        ],
     }
     if component not in count_cost_map:
         raise ValueError(f"Unsupported volume_spike component: {component}")
 
-    count_col, cost_cols = count_cost_map[component]
+    entries = count_cost_map[component]
+    if not isinstance(entries, list):
+        entries = [entries]
 
     changed_days = 0
     for acc in tqdm(accounts, desc="Applying volume spike", unit="account"):
@@ -230,21 +280,22 @@ def _apply_volume_spike(
 
             idx = _find_summary_row_idx(df_day)
 
-            old_n = int(df.at[idx, count_col]) if count_col in df.columns else 0
-            if old_n <= 0:
-                old_n = min_base
+            for count_col, cost_cols in entries:
+                old_n = int(df.at[idx, count_col]) if count_col in df.columns else 0
+                if old_n <= 0:
+                    old_n = min_base
+                    if count_col in df.columns:
+                        df.at[idx, count_col] = old_n
+
+                new_n = int(np.ceil(old_n * factor))
                 if count_col in df.columns:
-                    df.at[idx, count_col] = old_n
+                    df.at[idx, count_col] = new_n
 
-            new_n = int(np.ceil(old_n * factor))
-            if count_col in df.columns:
-                df.at[idx, count_col] = new_n
-
-            # scale relevant costs roughly proportional to count change
-            scale = new_n / max(old_n, 1)
-            for col in cost_cols:
-                if col in df.columns:
-                    df.at[idx, col] = float(df.at[idx, col]) * scale
+                # scale relevant costs roughly proportional to count change
+                scale = new_n / max(old_n, 1)
+                for col in cost_cols:
+                    if col in df.columns:
+                        df.at[idx, col] = float(df.at[idx, col]) * scale
 
             df.loc[idx] = _recompute_derived_fields(df.loc[idx])
             changed_days += 1
@@ -260,13 +311,14 @@ def _apply_cap_spike(
     params: dict[str, Any],
     max_concurrent: int,
     rng: np.random.Generator,
-) -> dict[str, int]:
+) -> tuple[dict[str, Any], pd.DataFrame]:
     exceed_by = int(params.get("exceed_by", 10))
     if exceed_by <= 0:
         raise ValueError("cap_spike.params.exceed_by must be positive")
-
     existing_chat_ids = set(df["chat_id"].astype(str).tolist())
+    new_rows: list[dict[str, Any]] = []
     added_rows = 0
+
     for acc in tqdm(accounts, desc="Applying cap spike", unit="account"):
         mask_acc = df["account_id"].astype("Int64") == acc
         for day in pd.date_range(start, end).date:
@@ -281,54 +333,43 @@ def _apply_cap_spike(
                 continue
 
             to_add = target - current
-            # template: copy first row of that account-day; zero costs to keep "cap anomaly" separate from cost spike
+            summary_idx = _find_summary_row_idx(df_day)
+
+            dialog_per = float(params.get("dialog_cost_per_extra_chat", 0.0))
+            mult = params.get("dialog_cost_multiplier")
+
+            if dialog_per > 0:
+                extra_total = dialog_per * to_add
+                per_col = extra_total / max(len(COST_COLUMNS), 1)
+                for col in COST_COLUMNS:
+                    if col in df.columns:
+                        df.at[summary_idx, col] = float(df.at[summary_idx, col]) + per_col
+
+            elif mult is not None:
+                m = float(mult)
+                factor = 1.0 + m * to_add
+                for col in COST_COLUMNS:
+                    if col in df.columns:
+                        df.at[summary_idx, col] = float(df.at[summary_idx, col]) * factor
+
+            # recompute totals/flags after changing costs
+            df.loc[summary_idx] = _recompute_derived_fields(df.loc[summary_idx])
+
             template = df_day.iloc[0].copy()
             template["account_id"] = acc
             template["date"] = day
 
             for _ in range(to_add):
-                new_row = template.copy()
-                new_row["chat_id"] = _make_chat_id(rng, existing_chat_ids)
-                # Keep totals on the original summary row; new chat rows should not carry totals
-                for col in [
-                    "cost_dialog",
-                    "cost_task",
-                    "total_cost_tasks",
-                    "cost_classification",
-                    "cost_qc",
-                    "cost_check_list",
-                    "total_cost_classifications",
-                    "cost_amocrm_call",
-                    "total_cost",
-                    "has_tasks",
-                    "has_classifications",
-                    "has_amocrm_call",
-                    "num_services",
-                    "has_both",
-                    "n_tasks",
-                    "n_classifications",
-                    "n_amocrm_calls",
-                ]:
+                row = template.copy()
+                row["chat_id"] = _make_chat_id(rng, existing_chat_ids)
+                for col in CAP_SPIKE_ZERO_COLUMNS:
                     if col in df.columns:
-                        # for counts and flags, set 0; for costs set 0.0
-                        new_row[col] = (
-                            0
-                            if str(df[col].dtype).startswith(("Int", "int"))
-                            or col.startswith("n_")
-                            or col.startswith("has_")
-                            else 0.0
-                        )
-                        if col in (
-                            "has_tasks",
-                            "has_classifications",
-                            "has_amocrm_call",
-                            "has_both",
-                            "num_services",
-                        ):
-                            new_row[col] = 0
-
-                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                        row[col] = 0
+                new_rows.append(row.to_dict())
                 added_rows += 1
+
+    if new_rows:
+        df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
     return {"added_rows": added_rows, "cap": max_concurrent, "exceed_by": exceed_by}, df
 
@@ -344,6 +385,7 @@ def inject_anomalies(
     output_csv: str,
     labels_jsonl: str,
 ) -> None:
+    """Load base CSV and YAML config, apply all scenarios, write anomaly CSV and JSONL labels."""
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
 
     base_seed = int(cfg.get("base_seed", 123))
@@ -439,6 +481,7 @@ def inject_anomalies(
 
 
 def main() -> None:
+    """CLI entrypoint: parse args and run inject_anomalies."""
     ap = argparse.ArgumentParser(
         description="Inject anomalies into synthetic cost dataset and emit JSONL labels."
     )

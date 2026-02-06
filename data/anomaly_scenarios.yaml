@@ -15,18 +15,18 @@ defaults:
     duration_days: 3
 
 scenarios:
-  - scenario_id: cost_spike_dialog_oct
+  - scenario_id: cost_spike_task_oct
     anomaly_type: cost_spike
     seed: 1001
     account_selection:
       mode: random_k
-      k: 30
+      k: 30                    # 10x more accounts (was 30)
     window:
       start_date: 2025-10-15
       duration_days: 3
     params:
-      component: dialog          # dialog | tasks | classifications | amocrm_call
-      magnitude: 6.0             # multiplier = 1 + magnitude
+      component: all             # all | dialog | tasks | classifications | amocrm_call
+      magnitude: 100.0            # multiplier = 1 + magnitude (was 6.0, *10 for visibility)
     driver_template: "Increase driven by unusually high token usage in dialog (unit-cost spike)."
 
   - scenario_id: volume_spike_tasks_mar
@@ -34,14 +34,14 @@ scenarios:
     seed: 1002
     account_selection:
       mode: random_k
-      k: 45
+      k: 45                    # 10x more accounts (was 45)
     window:
       start_date: 2025-03-05
-      duration_days: 5
+      duration_days: 3
     params:
-      component: tasks           # tasks | classifications | amocrm_call
-      magnitude: 4.0             # new_n = ceil(old_n * (1 + magnitude))
-      min_base_count: 3          # if old_n==0, start from this then spike
+      component: all             # all | tasks | classifications | amocrm_call
+      magnitude: 100.0            # new_n = ceil(old_n * (1 + magnitude)) (was 4.0, *10)
+      min_base_count: 3
     driver_template: "Increase driven by unusually high number of tasks (usage spike)."
 
   - scenario_id: cap_spike_jun
@@ -49,10 +49,11 @@ scenarios:
     seed: 1003
     account_selection:
       mode: random_k
-      k: 15
+      k: 15                    # 10x more accounts (was 15)
     window:
       start_date: 2025-06-20
-      duration_days: 2
+      duration_days: 3
     params:
-      exceed_by: 30              # add chats so rows_per_account_day becomes max_concurrent + exceed_by
+      exceed_by: 300
+      dialog_cost_multiplier: 0.5          # was 30, *10 so added rows are much more visible
     driver_template: "Increase driven by unusually high concurrent chats (cap violation)."
