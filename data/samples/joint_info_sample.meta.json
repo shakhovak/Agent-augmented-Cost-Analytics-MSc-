@@ -1,0 +1,243 @@
+{
+  "dataset_version": "0.1.1",
+  "created_at_utc": "2026-02-06T11:02:17.284766+00:00",
+  "python_version": "3.11.8",
+  "git_commit": "341555b10f19cce55d5712ae41091c2be497ed86",
+  "config_path": "data\\samples\\sample_config.yaml",
+  "config_sha256": "d5662513fc3e8c4e4c68fbd8d58730618d9dff5808b25d78ecb75e08b420b5e2",
+  "output_csv": "data\\samples\\joint_info_sample.csv",
+  "output_csv_sha256": "6fb16a87d69041c782ef22f8f4cd29c174014905bcb8d046bbf6c8f0f215a0f0",
+  "seeds": {
+    "dataset_seed": 42
+  },
+  "params": {
+    "dataset": {
+      "start_date": "2025-01-01",
+      "end_date": "2025-03-15",
+      "seed": 42
+    },
+    "accounts": {
+      "n_accounts": 3,
+      "account_id_min": 10000000,
+      "account_id_max": 28000000
+    },
+    "chats": {
+      "max_concurrent_per_account": 50,
+      "chat_id_digits": 11,
+      "chat_types": [
+        "whatsapp",
+        "telegram",
+        "instagram",
+        "avito",
+        "vk",
+        "max",
+        "viber"
+      ]
+    },
+    "chat_lifecycle": {
+      "initial_active_chats_per_account": {
+        "dist": "poisson",
+        "mean": 12,
+        "min": 1,
+        "max": 50
+      },
+      "enabled": true,
+      "new_chats_lambda_per_account_day": 0.27,
+      "lifetime": {
+        "dist": "geometric",
+        "mean_days": 45
+      },
+      "reactivation_prob": 0.002
+    },
+    "activity": {
+      "p_full_day": 0.03,
+      "base_q": 0.2,
+      "q_clip_min": 0.01,
+      "q_clip_max": 0.95,
+      "dow_multiplier": {
+        "Mon": 1.0,
+        "Tue": 1.05,
+        "Wed": 1.1,
+        "Thu": 1.05,
+        "Fri": 1.0,
+        "Sat": 0.7,
+        "Sun": 0.6
+      },
+      "month_multiplier": {
+        "1": 1.0,
+        "2": 1.05,
+        "3": 1.1,
+        "4": 1.05,
+        "5": 1.0,
+        "6": 0.85,
+        "7": 0.75,
+        "8": 0.8,
+        "9": 0.95,
+        "10": 1.0,
+        "11": 1.05,
+        "12": 0.95
+      },
+      "chat_popularity_lognorm_sigma": 1.0
+    },
+    "services_usage_days": {
+      "reference_window_days": 100,
+      "mean_active_days": {
+        "tasks": 50,
+        "classifications": 60,
+        "amocrm_call": 80
+      },
+      "dispersion_k": {
+        "tasks": 8,
+        "classifications": 8,
+        "amocrm_call": 6
+      },
+      "dialog": {
+        "mean_active_days": 20,
+        "dispersion_k": 12
+      }
+    },
+    "services_event_volume": {
+      "mean_events_per_active_day": {
+        "tasks": 30,
+        "classifications": 60,
+        "amocrm_call": 40
+      },
+      "dispersion_k": {
+        "tasks": 10,
+        "classifications": 10,
+        "amocrm_call": 8
+      }
+    },
+    "services": {
+      "cost_when_used": {
+        "dialog": {
+          "min": 2.0,
+          "max": 42.0,
+          "median": 2.0,
+          "sigma": 0.35
+        },
+        "tasks": {
+          "min": 2.0,
+          "max": 109.0,
+          "median": 5.0,
+          "sigma": 0.7
+        },
+        "classifications": {
+          "min": 3.0,
+          "max": 385.0,
+          "median": 17.0,
+          "sigma": 0.35
+        },
+        "amocrm_call": {
+          "min": 1.0,
+          "max": 154.0,
+          "median": 4.0,
+          "sigma": 0.9
+        }
+      }
+    },
+    "services_model": {
+      "launch_dates": {
+        "tasks": "2025-02-01",
+        "classifications": "2025-01-01",
+        "amocrm_call": "2025-02-01",
+        "dialog": "2025-01-01"
+      },
+      "trial_days": 7,
+      "p_convert_after_trial": {
+        "tasks": 0.8,
+        "classifications": 0.85,
+        "amocrm_call": 0.9
+      },
+      "new_adopters_per_month": {
+        "tasks": 40,
+        "classifications": 160,
+        "amocrm_call": 200
+      },
+      "adoption_day_bias": {
+        "type": "exp_decay",
+        "alpha": 0.1
+      },
+      "retention_targets": {
+        "tasks": {
+          "r30": 0.85,
+          "r60": 0.6,
+          "r90": 0.45
+        },
+        "classifications": {
+          "r30": 0.8,
+          "r60": 0.55,
+          "r90": 0.4
+        },
+        "amocrm_call": {
+          "r30": 0.75,
+          "r60": 0.55,
+          "r90": 0.45
+        }
+      },
+      "post90_daily_churn": {
+        "tasks": 0.01,
+        "classifications": 0.008,
+        "amocrm_call": 0.001
+      },
+      "usage": {
+        "base_event_rate_per_day": {
+          "dialog": 0.6,
+          "tasks": 0.25,
+          "classifications": 1.2,
+          "amocrm_call": 0.15
+        },
+        "duration_lognorm": {
+          "dialog": {
+            "median_sec": 25,
+            "sigma": 0.35
+          },
+          "tasks": {
+            "median_sec": 80,
+            "sigma": 0.55
+          },
+          "classifications": {
+            "median_sec": 35,
+            "sigma": 0.35
+          },
+          "amocrm_call": {
+            "median_sec": 140,
+            "sigma": 0.85
+          }
+        },
+        "pricing": {
+          "dialog": {
+            "base_fee": 2.0,
+            "per_sec": 0.01,
+            "min": 2.0,
+            "max": 42.0
+          },
+          "tasks": {
+            "base_fee": 2.0,
+            "per_sec": 0.015,
+            "min": 2.0,
+            "max": 109.0
+          },
+          "classifications": {
+            "base_fee": 3.0,
+            "per_sec": 0.02,
+            "min": 3.0,
+            "max": 385.0
+          },
+          "amocrm_call": {
+            "base_fee": 1.0,
+            "per_sec": 0.008,
+            "min": 1.0,
+            "max": 154.0
+          }
+        }
+      },
+      "distribute_to_chats": {
+        "mode": "one_chat"
+      }
+    },
+    "output": {
+      "path": "data/samples/joint_info_sample.csv"
+    }
+  }
+}
