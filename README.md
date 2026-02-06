@@ -30,3 +30,8 @@ pre-commit run --all-files
 
 - [Dev workflow](docs/dev_workflow.md)
 - [Iteration checklist](docs/iteration_checklist.md)
+
+## Documentation
+
+- Security & data handling: `docs/security_and_data_handling.md`
+- Ethics statement: `docs/ethics_statement.md`
