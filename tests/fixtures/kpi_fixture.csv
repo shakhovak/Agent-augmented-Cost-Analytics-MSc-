@@ -1,0 +1,8 @@
+account_id,chat_id,chat_type,date,cost_dialog,cost_task,total_cost_tasks,cost_classification,cost_qc,cost_check_list,total_cost_classifications,cost_amocrm_call,total_cost,has_tasks,has_classifications,has_amocrm_call,num_services,has_both,n_tasks,n_classifications,n_amocrm_calls
+1,c1,telegram,2025-01-01,2.0,0.0,3.0,5.0,0.0,0.0,5.0,0.0,10.0,1,1,0,2,1,3,1,0
+1,c2,telegram,2025-01-01,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,0,0,0,0,0,0
+2,c3,whatsapp,2025-01-01,1.0,0.0,0.0,3.0,0.0,0.0,3.0,0.0,4.0,0,1,0,1,0,0,1,0
+3,c4,avito,2025-01-01,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,0,0,0,0,0,0
+1,c1,telegram,2025-01-02,0.0,0.0,2.0,0.0,0.0,0.0,0.0,0.0,2.0,1,0,0,1,0,2,0,0
+2,c3,whatsapp,2025-01-02,0.0,0.0,0.0,0.0,0.0,0.0,0.0,5.0,5.0,0,0,1,1,0,0,0,1
+3,c5,instagram,2025-01-02,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0,0,0,0,0,0,0
