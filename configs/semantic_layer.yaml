@@ -1,0 +1,159 @@
+# Semantic Layer Configuration
+# Defines dimensions, measures, and derived metrics
+
+version: 1
+
+dataset:
+  name: "joint_costs_daily"
+  description: "Curated joint table of daily costs per account/chat/type"
+  source: "csv"
+  date_column: "date"
+  primary_keys: ["account_id", "chat_id", "chat_type", "date"]
+  expected_row_grain: "account_id × chat_id × chat_type × day"
+  parsing:
+    date_format: "auto"          # e.g. ISO or auto-parse
+    timezone: "UTC"              # set a convention even if date-only
+  row_safety:
+    max_rows_default: 2000
+    max_rows_hard: 20000
+    max_days_default: 30
+    max_days_hard: 180
+    default_top_n: 10
+    drilldown_requires_filters:
+      - "account_id"
+    drilldown_max_days: 7
+
+dimensions:
+  - name: "date"
+    type: "date"
+    grain: "day"
+    description: "Daily date of usage/cost"
+
+  - name: "account_id"
+    type: "int"
+    description: "Anonymised customer/tenant identifier"
+
+  - name: "chat_type"
+    type: "string"
+    description: "Service or workflow category"
+
+  - name: "chat_id"
+    type: "string"
+    description: "Interaction identifier (drill-down only)"
+
+measures:
+  - name: "total_cost"
+    type: "float"
+    unit: "currency"
+    description: "Total daily cost for this row"
+
+  - name: "cost_dialog"
+    type: "float"
+    unit: "currency"
+    description: "Cost of dialogue/interaction processing"
+
+  - name: "cost_task"
+    type: "float"
+    unit: "currency"
+    description: "Cost attributed to tasks"
+
+  - name: "total_cost_tasks"
+    type: "float"
+    unit: "currency"
+    description: "Total tasks cost bucket (may include multiple sub-components)"
+
+  - name: "cost_classification"
+    type: "float"
+    unit: "currency"
+    description: "Cost attributed to classifications"
+
+  - name: "cost_qc"
+    type: "float"
+    unit: "currency"
+
+  - name: "cost_check_list"
+    type: "float"
+    unit: "currency"
+
+  - name: "total_cost_classifications"
+    type: "float"
+    unit: "currency"
+    description: "Total classifications cost bucket (may include multiple sub-components)"
+
+flags:
+  - name: "has_tasks"
+    type: "int"
+    values: [0, 1]
+    description: "1 if tasks are present for the row/day"
+
+  - name: "has_classifications"
+    type: "int"
+    values: [0, 1]
+    description: "1 if classifications are present for the row/day"
+
+  - name: "has_both"
+    type: "int"
+    values: [0, 1]
+    description: "1 if both tasks and classifications are present for the row/day"
+
+derived_metrics:
+  - name: "active_users"
+    type: "int"
+    description: "Count of distinct account_id with total_cost > 0 in the selected window"
+
+  - name: "dials_analyzed"
+    type: "int"
+    description: "Count of distinct (account_id, chat_id, chat_type) with total_cost > 0"
+
+  - name: "avg_cost_per_account"
+    type: "float"
+    description: "total_cost_sum / active_users (diluted average across active users)"
+
+  - name: "avg_cost_per_account_non_diluted"
+    type: "float"
+    description: >
+      Non-diluted average used for dashboarding: compute average per account for tasks
+      (only accounts with tasks) + average per account for classifications (only accounts with classifications).
+      This may differ from total_cost_sum/active_users.
+
+  - name: "delta_abs"
+    type: "float"
+    description: "Difference between current period and comparison period"
+
+  - name: "delta_pct"
+    type: "float"
+    description: "delta_abs / comparison_value"
+
+  - name: "share_of_total"
+    type: "float"
+    description: "metric_value / total_cost_value"
+
+allowed_operations:
+  filters:
+    - "date_range"
+    - "account_id_in"
+    - "chat_type_in"
+    - "has_tasks"
+    - "has_classifications"
+    - "has_both"
+  group_by:
+    - "date"
+    - "account_id"
+    - "chat_type"
+    - "chat_id"
+  aggregations:
+    - "sum"
+    - "mean"
+    - "median"
+    - "count"
+    - "count_distinct"
+  sorting:
+    - "asc"
+    - "desc"
+  charts:
+    - "kpi_cards"
+    - "line_trend"
+    - "bar_top_n"
+    - "pie_composition"
+    - "hist_distribution"
+    - "table"

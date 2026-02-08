@@ -52,6 +52,8 @@ def run_standard_daily_report(
     report_templates_path: str = "configs/report_templates.yaml",
     template_id: str = "standard_daily_report",
     limits: SafetyLimits | None = None,
+    top_n_override: int | None = None,
+    trend_days_override: int | None = None,
 ) -> RunArtifacts:
     """
     Orchestrator for the "Standard Daily Report" button.
@@ -77,8 +79,13 @@ def run_standard_daily_report(
         raise ConfigError(f"Template '{template_id}' not found in {report_templates_path}")
 
     constraints = tpl.get("constraints") or {}
-    top_n = int(constraints.get("top_n", 10))
+    top_n_cfg = int(constraints.get("top_n", 10))
     max_days = int(constraints.get("max_days", 8))
+
+    top_n = int(top_n_override) if top_n_override is not None else top_n_cfg
+
+    trend_days_default = max(2, min(7, max_days - 1) + 1)
+    trend_days = int(trend_days_override) if trend_days_override is not None else trend_days_default
 
     # Instantiate backend (CSV-only Stage 1)
     backend = CsvBackend(
@@ -86,14 +93,20 @@ def run_standard_daily_report(
         dataset_name=dataset_name,
         limits=limits or SafetyLimits(),
     )
+    available_days = set(pd.to_datetime(backend.df["date"]).dt.date.unique())
+    if report_day not in available_days:
+        raise ValueError(
+            f"report_day={report_day.isoformat()} is not present in dataset. "
+            f"Available range: {min(available_days).isoformat()}..{max(available_days).isoformat()}"
+        )
 
     # Build evidence pack from full DF (deterministic; uses date filtering internally)
     # Note: we do not perform "query planning" here yet; templates keep it simple.
     evidence = build_standard_daily_evidence(
         df_all=backend.df,
         report_day=report_day,
-        trend_days=max(2, min(7, max_days - 1) + 1),  # keep typical 7d, bounded by max_days
-        top_n=top_n,
+        trend_days=trend_days,
+        top_accounts_n=top_n,
     )
 
     # Build dashboard
@@ -126,6 +139,7 @@ def run_standard_daily_report(
 
     # Lineage is produced by backend.query(), but we didn’t call it here (we used backend.df).
     # For Stage 1, record dataset hash and high-level metadata anyway.
+    evidence_tables = sorted(evidence.keys())
     record = RunRecord(
         run_id=run_id,
         started_at_utc=started_at,
@@ -147,7 +161,12 @@ def run_standard_daily_report(
                 "description": tpl.get("description"),
                 "constraints": constraints,
             },
-            "evidence_tables": list(evidence.keys()),
+            "constraints": {
+                **constraints,
+                "top_n_effective": top_n,
+                "trend_days_effective": trend_days,
+            },
+            "evidence_tables": evidence_tables,
         },
     )
 

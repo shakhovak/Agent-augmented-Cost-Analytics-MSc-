@@ -1,86 +1,76 @@
-"""CLI entrypoint: produce outputs to /outputs/."""
-
-# src/cli/run_daily_report.py
 from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date as date_type
+from datetime import date
+from pathlib import Path
 
-from src.core.utils_dates import compute_yesterday, parse_date
-from src.reports.daily_report import run_standard_daily_report
+from cost_agent_mvp.reports.daily_report import run_standard_daily_report
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="run_daily_report",
-        description="Generate the Standard Daily Cost Monitoring Report from a CSV snapshot.",
+        description="Run the standard daily report (deterministic baseline)."
     )
-    p.add_argument(
-        "--csv",
-        required=True,
-        help="Path to the joint CSV file (snapshot).",
-    )
-    p.add_argument(
-        "--date",
-        default=None,
-        help="Report day in YYYY-MM-DD. If omitted, uses yesterday (UTC).",
-    )
+    p.add_argument("--csv", required=True, help="Path to CSV dataset")
+    p.add_argument("--day", required=True, help="Report day in YYYY-MM-DD format")
+
     p.add_argument(
         "--out",
         default="outputs/runs",
-        help="Output root directory for run artifacts. Default: outputs/runs",
+        help="Output root directory (default: outputs/runs)",
+    )
+    p.add_argument(
+        "--templates-path",
+        default="configs/report_templates.yaml",
+        help="Path to report_templates.yaml",
     )
     p.add_argument(
         "--template",
         default="standard_daily_report",
-        help="Template id from configs/report_templates.yaml. Default: standard_daily_report",
+        help="Template id (default: standard_daily_report)",
     )
-    p.add_argument(
-        "--templates",
-        default="configs/report_templates.yaml",
-        help="Path to report_templates.yaml. Default: configs/report_templates.yaml",
-    )
-    p.add_argument(
-        "--dataset-name",
-        default="joint_costs_daily",
-        help="Dataset name for run metadata. Default: joint_costs_daily",
-    )
+    p.add_argument("--dataset-name", default="joint_costs_daily", help="Dataset name label")
+
+    # Optional overrides (milestone wants these)
+    p.add_argument("--top-n", type=int, default=None, help="Override template constraints.top_n")
+    p.add_argument("--trend-days", type=int, default=None, help="Override trend window in days")
+
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = _build_parser()
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
 
-    if args.date:
-        report_day: date_type = parse_date(args.date)
-    else:
-        report_day, _ = compute_yesterday()  # returns (yesterday, yesterday)
+    try:
+        csv_path = str(Path(args.csv))
+        report_day = date.fromisoformat(args.day)
 
-    artifacts = run_standard_daily_report(
-        csv_path=args.csv,
-        report_day=report_day,
-        output_root=args.out,
-        dataset_name=args.dataset_name,
-        report_templates_path=args.templates,
-        template_id=args.template,
-    )
+        artifacts = run_standard_daily_report(
+            csv_path=csv_path,
+            report_day=report_day,
+            output_root=args.out,
+            dataset_name=args.dataset_name,
+            report_templates_path=args.templates_path,
+            template_id=args.template,
+            # optional overrides (requires small change in orchestrator; see below)
+            top_n_override=args.top_n,
+            trend_days_override=args.trend_days,
+        )
 
-    print("Report generated successfully.")
-    print(f"Run ID: {artifacts.run_id}")
-    print(f"Output dir: {artifacts.output_dir}")
-    if artifacts.dashboard_png:
-        print(f"Dashboard PNG: {artifacts.dashboard_png}")
-    if artifacts.summary_txt:
-        print(f"Summary: {artifacts.summary_txt}")
-    if artifacts.evidence_dir:
-        print(f"Evidence tables: {artifacts.evidence_dir}")
-    if artifacts.run_record_json:
-        print(f"Run record: {artifacts.run_record_json}")
+        # Print “run evidence”
+        print(f"run_id: {artifacts.run_id}")
+        print(f"output_dir: {artifacts.output_dir}")
+        print(f"dashboard_png: {artifacts.dashboard_png}")
+        print(f"summary_txt: {artifacts.summary_txt}")
+        print(f"run_record_json: {artifacts.run_record_json}")
+        print(f"evidence_dir: {artifacts.evidence_dir}")
+        return 0
 
-    return 0
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:]))
+    raise SystemExit(main())

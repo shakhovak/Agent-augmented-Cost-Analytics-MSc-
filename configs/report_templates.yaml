@@ -1,0 +1,131 @@
+# Report Templates Configuration
+# Defines button templates for different report types
+
+version: 1
+
+templates:
+  standard_daily_report:
+    title: "Standard Daily Report"
+    description: "Daily cost control summary: scale, unit cost, tail risk, service mix, and top accounts."
+    time_window:
+      type: "day"  # explicit single report_day
+    constraints:
+      top_n: 10
+      max_days: 8
+      cost_cap_usd: 30
+      price_per_account_day_usd: 100
+      currency: "USD"
+
+    # Evidence Pack v0 outputs (actual table keys written by build_standard_daily_evidence)
+    evidence_pack:
+      tables:
+        - "kpis"
+        - "trend_daily"
+        - "service_breakdown"
+        - "service_totals"
+        - "top_accounts"
+        - "distribution_hist"
+        - "distribution_stats"
+        - "service_combinations"
+        - "dials_cost_trend"
+        - "exceptions_queue"
+
+    # Chart spec is informational for now (or future template-driven renderer).
+    # Current dashboard_builder renders these views:
+    charts:
+      - id: "kpi_cards"
+        type: "kpi_cards"
+        table: "kpis"
+        fields:
+          - "active_users"
+          - "new_users"
+          - "churned_users"
+          - "avg_cost_per_active_account_day"
+          - "p95_cost_per_account_day"
+          - "total_cost_services"
+          - "pct_accounts_above_cap"
+          - "avg_margin_per_account_day"
+          - "dials_analyzed"
+
+      - id: "distribution_cost_per_account_day"
+        type: "hist_distribution"
+        table: "distribution_hist"
+        x: "cost_per_account_day"
+        title: "Distribution of Cost per Account-Day"
+        x_label: "Cost per Account-Day (USD)"
+        reference_lines:
+          - kind: "median"
+          - kind: "cap"
+            value: 30
+            label: "Cap: 30 USD"
+
+      - id: "service_mix"
+        type: "pie_composition"
+        table: "service_breakdown"
+        label: "label"
+        value: "cost"
+        title: "Cost Distribution by Service"
+
+      - id: "trend_unit_cost"
+        type: "line_trend"
+        table: "trend_daily"
+        x: "date"
+        y:
+          - "avg_cost_per_active_account_day"
+          - "p95_cost_per_account_day"
+        title: "Cost Trend (Last 7 Days)"
+        y_label: "Cost (USD)"
+
+      - id: "service_combinations"
+        type: "bar"
+        table: "service_combinations"
+        x: "label"
+        y: "active_users"
+        title: "Active Users by Service Combination"
+
+      - id: "service_totals"
+        type: "bar"
+        table: "service_totals"
+        x: "label"
+        y: "cost"
+        title: "Service Usage Breakdown (Total Costs)"
+        y_label: "Total Cost (USD)"
+
+      - id: "dials_vs_cost"
+        type: "dual_axis_trend"
+        table: "dials_cost_trend"
+        x: "date"
+        left_y: "dials_analyzed"
+        right_y: "total_cost_services"
+        title: "Dials & Cost Trends (Last 7 Days)"
+        left_y_label: "Dials"
+        right_y_label: "Total Cost (USD)"
+
+  # Future templates (kept for roadmap; evidence tables not implemented yet)
+  top_spikes_accounts:
+    title: "Top Spikes"
+    description: "Accounts with the largest day-over-day cost increases. (Not implemented in Evidence Pack v0.)"
+    time_window:
+      type: "last_n_days"
+      n_days: 2
+    constraints:
+      top_n: 20
+      max_days: 14
+    evidence_pack:
+      tables: []
+    charts: []
+
+  account_drilldown:
+    title: "Account Drilldown"
+    description: "Account-level view for a selected account. (Not implemented in Evidence Pack v0.)"
+    time_window:
+      type: "last_n_days"
+      n_days: 14
+    required_filters:
+      - "account_id"
+    constraints:
+      top_n: 20
+      max_days: 30
+    evidence_pack:
+      tables: []
+    charts: []
