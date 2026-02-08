@@ -1,6 +1,9 @@
 from pathlib import Path
 
+import matplotlib
 import pytest
+
+matplotlib.use("Agg", force=True)
 
 
 @pytest.fixture

@@ -112,6 +112,35 @@ def generate_daily_summary(evidence: EvidencePack, top_n: int = 3) -> str:
             f"Dials analyzed: {_fmt_int(r.get('dials_analyzed', 0))} "
             f"({_fmt_pct_from_fraction(r.get('dials_analyzed_delta_pct', 0.0))} vs previous day)"
         )
+        # --- Unit economics & tail risk (from KPI cards)
+    avg_cost = r.get("avg_cost_per_active_account_day")
+    if avg_cost is not None:
+        lines.append(
+            f"Avg cost per active account-day: {_fmt_money(avg_cost)} "
+            f"({_fmt_pct_from_fraction(r.get('avg_cost_per_active_account_day_delta_pct', 0.0))} vs previous day)"
+        )
+
+    p95 = r.get("p95_cost_per_account_day")
+    if p95 is not None:
+        lines.append(
+            f"p95 cost per account-day: {_fmt_money(p95)} "
+            f"({_fmt_pct_from_fraction(r.get('p95_cost_per_account_day_delta_pct', 0.0))} vs previous day)"
+        )
+
+    above_cap = r.get("pct_accounts_above_cap")
+    if above_cap is not None:
+        # stored as fraction (0..1) in evidence; print as percent
+        lines.append(
+            f"% accounts above cap (30 USD): {_fmt_pct_from_fraction(above_cap)} "
+            f"({_fmt_pct_from_fraction(r.get('pct_accounts_above_cap_delta_pct', 0.0))} vs previous day)"
+        )
+
+    margin = r.get("avg_margin_per_account_day")
+    if margin is not None:
+        lines.append(
+            f"Avg margin per account-day: {_fmt_money(margin)} "
+            f"({_fmt_pct_from_fraction(r.get('avg_margin_per_account_day_delta_pct', 0.0))} vs previous day)"
+        )
 
     # --- Top services by cost
     lines.append("")
