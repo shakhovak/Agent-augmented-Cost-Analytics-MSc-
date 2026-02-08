@@ -1,256 +1,180 @@
+from __future__ import annotations
+
+from datetime import date
+
 import pandas as pd
-import pytest
 
-from cost_agent_mvp.core.errors import ValidationError
-from src.cost_agent_mvp.analytics.kpi_definitions import (
-    active_account_days,
-    active_users,
-    avg_cost_per_account_diluted,
-    avg_cost_per_account_non_diluted,
-    avg_cost_per_active_account_day,
-    avg_cost_per_active_service_account,
-    component_costs_sum,
-    delta,
-    delta_abs,
-    delta_pct,
-    dials_analyzed,
-    distribution_stats,
-    histogram_table,
-    per_account_total_cost,
-    rows_per_account_day_stats,
-    service_mix_share,
-    top_accounts,
-    total_cost_sum,
-)
+from cost_agent_mvp.analytics import kpi_definitions as kd
 
 
-def _df_small() -> pd.DataFrame:
-    # Two accounts, two dates. Totals are present only on some rows,
-    # plus extra “empty” chat rows to simulate chat-level grain.
-    return pd.DataFrame(
+def _df_day() -> pd.DataFrame:
+    """
+    Small, explicit fixture for one day.
+    We include:
+      - multiple rows per account (to test "dials" counting rows)
+      - zero-cost rows (must be excluded from 'active' logic)
+      - all three service columns expected by KPI logic
+    """
+    d = date(2025, 1, 1)
+    df = pd.DataFrame(
         [
-            # account 1, day 1: one cost row + one empty row
+            # account 1: one active row (tasks), one zero row
             {
                 "account_id": 1,
-                "date": "2025-01-01",
-                "chat_id": "c1",
-                "chat_type": "telegram",
-                "total_cost": 10.0,
-                "cost_dialog": 2.0,
-                "total_cost_tasks": 3.0,
-                "total_cost_classifications": 5.0,
+                "date": d,
+                "total_cost_tasks": 10.0,
+                "total_cost_classifications": 0.0,
                 "cost_amocrm_call": 0.0,
-                "has_tasks": 1,
-                "has_classifications": 1,
             },
             {
                 "account_id": 1,
-                "date": "2025-01-01",
-                "chat_id": "c2",
-                "chat_type": "telegram",
-                "total_cost": 0.0,
-                "cost_dialog": 0.0,
+                "date": d,
                 "total_cost_tasks": 0.0,
                 "total_cost_classifications": 0.0,
                 "cost_amocrm_call": 0.0,
-                "has_tasks": 0,
-                "has_classifications": 0,
             },
-            # account 1, day 2: only empty rows (no paid activity)
-            {
-                "account_id": 1,
-                "date": "2025-01-02",
-                "chat_id": "c3",
-                "chat_type": "whatsapp",
-                "total_cost": 0.0,
-                "cost_dialog": 0.0,
-                "total_cost_tasks": 0.0,
-                "total_cost_classifications": 0.0,
-                "cost_amocrm_call": 0.0,
-                "has_tasks": 0,
-                "has_classifications": 0,
-            },
-            # account 2, day 1: one cost row (different component mix)
+            # account 2: two active rows (classifications + amocrm)
             {
                 "account_id": 2,
-                "date": "2025-01-01",
-                "chat_id": "c4",
-                "chat_type": "whatsapp",
-                "total_cost": 4.0,
-                "cost_dialog": 1.0,
+                "date": d,
                 "total_cost_tasks": 0.0,
-                "total_cost_classifications": 3.0,
+                "total_cost_classifications": 20.0,
                 "cost_amocrm_call": 0.0,
-                "has_tasks": 0,
-                "has_classifications": 1,
-            },
-            # account 2, day 1: extra empty rows to test rows_per_account_day_stats
-            {
-                "account_id": 2,
-                "date": "2025-01-01",
-                "chat_id": "c5",
-                "chat_type": "whatsapp",
-                "total_cost": 0.0,
-                "cost_dialog": 0.0,
-                "total_cost_tasks": 0.0,
-                "total_cost_classifications": 0.0,
-                "cost_amocrm_call": 0.0,
-                "has_tasks": 0,
-                "has_classifications": 0,
             },
             {
                 "account_id": 2,
-                "date": "2025-01-01",
-                "chat_id": "c6",
-                "chat_type": "whatsapp",
-                "total_cost": 0.0,
-                "cost_dialog": 0.0,
+                "date": d,
+                "total_cost_tasks": 0.0,
+                "total_cost_classifications": 0.0,
+                "cost_amocrm_call": 5.0,
+            },
+            # account 3: only zero rows -> should NOT be counted as active user
+            {
+                "account_id": 3,
+                "date": d,
                 "total_cost_tasks": 0.0,
                 "total_cost_classifications": 0.0,
                 "cost_amocrm_call": 0.0,
-                "has_tasks": 0,
-                "has_classifications": 0,
             },
         ]
     )
+    # total_cost is often present in your pipeline; set it for completeness
+    df["total_cost"] = (
+        df["total_cost_tasks"] + df["total_cost_classifications"] + df["cost_amocrm_call"]
+    )
+    return df
 
 
-def test_total_cost_sum():
-    df = _df_small()
-    assert total_cost_sum(df) == 14.0
+def test_active_users_unique_accounts_excludes_zero_cost() -> None:
+    df = _df_day()
+    assert kd.active_users(df) == 2  # accounts 1 and 2 only
 
 
-def test_active_users():
-    df = _df_small()
-    assert active_users(df) == 2
+def test_dials_analyzed_counts_nonzero_service_lines() -> None:
+    df = _df_day()
+    # active rows are: (acc1 row1), (acc2 row3), (acc2 row4) => 3 rows
+    assert kd.dials_analyzed(df) == 3
 
 
-def test_active_account_days():
-    df = _df_small()
-    # (1, 2025-01-01) and (2, 2025-01-01) have total_cost > 0
-    assert active_account_days(df) == 2
+def test_avg_cost_per_account_non_diluted_logic() -> None:
+    """
+    Expected non-diluted average definition:
+      - For each service separately:
+          filter rows where service_cost > 0
+          groupby account_id -> mean (per account)
+          mean across accounts (average of account-means)
+      - Then sum across services
+    Using _df_day():
+      tasks: only acc1 has >0 => mean_tasks = 10
+      classifications: only acc2 has >0 => mean_classif = 20
+      amocrm: only acc2 has >0 => mean_amocrm = 5
+      total = 35
+    """
+    df = _df_day()
+    assert kd.avg_cost_per_account_non_diluted(df) == 35.0
 
 
-def test_avg_cost_per_active_account_day():
-    df = _df_small()
-    # total_cost_sum = 14, active_account_days = 2
-    assert avg_cost_per_active_account_day(df) == 7.0
+def test_total_cost_services_sums_service_columns() -> None:
+    df = _df_day()
+    assert kd.total_cost_services(df) == 35.0
 
 
-def test_dials_analyzed():
-    df = _df_small()
-    # unique (account_id, chat_id, chat_type) among rows with total_cost>0: c1 and c4
-    assert dials_analyzed(df) == 2
+def test_per_account_day_costs_excludes_zero_accounts_and_sums_rows() -> None:
+    df = _df_day()
+    # account 1: 10; account 2: 20 + 5 = 25; account 3 excluded
+    s = kd.per_account_day_costs(df)
+    assert s.to_dict() == {1: 10.0, 2: 25.0} or s.to_dict() == {2: 25.0, 1: 10.0}
+    assert set(s.index.tolist()) == {1, 2}
 
 
-def test_component_costs_sum():
-    df = _df_small()
-    out = component_costs_sum(df)
-    assert out["cost_dialog"] == 3.0
-    assert out["total_cost_tasks"] == 3.0
-    assert out["total_cost_classifications"] == 8.0
-    # present in df, should be included
-    assert out["cost_amocrm_call"] == 0.0
+def test_avg_cost_per_active_account_day_is_diluted_total_over_active_users() -> None:
+    df = _df_day()
+    # total_cost_services = 35, active_users = 2 => 17.5
+    assert kd.avg_cost_per_active_account_day(df) == 17.5
 
 
-def test_service_mix_share():
-    df = _df_small()
-    mix = service_mix_share(df)
-    assert set(mix.columns) == {"component", "cost", "share"}
-    # shares should sum to 1 when total > 0 (floating tolerance)
-    assert abs(float(mix["share"].sum()) - 1.0) < 1e-9
-    # classification share = 8/11? careful: mix total is sum(component costs), not total_cost
-    # component totals: dialog=3, tasks=3, cls=8, calls=0 => total=14
-    cls_share = float(mix.loc[mix["component"] == "total_cost_classifications", "share"].iloc[0])
-    assert cls_share == 8.0 / 14.0
-    assert "cost_classification" not in set(mix["component"])
+def test_pxx_cost_and_cap_and_margin_on_small_fixture() -> None:
+    df = _df_day()
+    # per-account totals are [10, 25]; p95 = 10 + 0.95*(25-10) = 24.25
+    assert kd.pxx_cost_per_account_day(df, 0.95) == 24.25
+
+    # with cap=20: one of two accounts (25) is above => 0.5
+    assert kd.pct_accounts_above_cost_cap(df, cap_usd=20.0) == 0.5
+
+    # margin uses default price=100: 100 - 17.5 = 82.5
+    assert kd.avg_margin_per_account_day(df) == 82.5
 
 
-def test_avg_cost_per_account_diluted():
-    df = _df_small()
-    assert avg_cost_per_account_diluted(df) == 7.0  # 14 / 2 active users
+def test_user_churn_new_churned_net() -> None:
+    d = date(2025, 1, 2)
 
+    # Today: accounts 1,2 active
+    today = pd.DataFrame(
+        [
+            {
+                "account_id": 1,
+                "date": d,
+                "total_cost_tasks": 1.0,
+                "total_cost_classifications": 0.0,
+                "cost_amocrm_call": 0.0,
+            },
+            {
+                "account_id": 2,
+                "date": d,
+                "total_cost_tasks": 0.0,
+                "total_cost_classifications": 2.0,
+                "cost_amocrm_call": 0.0,
+            },
+        ]
+    )
+    today["total_cost"] = (
+        today["total_cost_tasks"] + today["total_cost_classifications"] + today["cost_amocrm_call"]
+    )
 
-def test_avg_cost_per_account_non_diluted_and_alias():
-    df = _df_small()
-    # tasks_mean: accounts with has_tasks==1 -> only account 1 -> sum(tasks)=3 => mean=3
-    # cls_mean: accounts with has_classifications==1 -> account 1 sum=5, account 2 sum=3 => mean=4
-    expected = 7.0
-    assert avg_cost_per_account_non_diluted(df) == expected
-    assert avg_cost_per_active_service_account(df) == expected
+    # Yesterday: accounts 2,3 active
+    yest = pd.DataFrame(
+        [
+            {
+                "account_id": 2,
+                "date": d,
+                "total_cost_tasks": 0.0,
+                "total_cost_classifications": 2.0,
+                "cost_amocrm_call": 0.0,
+            },
+            {
+                "account_id": 3,
+                "date": d,
+                "total_cost_tasks": 0.0,
+                "total_cost_classifications": 0.0,
+                "cost_amocrm_call": 3.0,
+            },
+        ]
+    )
+    yest["total_cost"] = (
+        yest["total_cost_tasks"] + yest["total_cost_classifications"] + yest["cost_amocrm_call"]
+    )
 
-
-def test_per_account_total_cost():
-    df = _df_small()
-    out = per_account_total_cost(df).sort_values("account_id").reset_index(drop=True)
-    assert list(out["account_id"]) == [1, 2]
-    assert list(out["total_cost"]) == [10.0, 4.0]
-
-
-def test_top_accounts():
-    df = _df_small()
-    out = top_accounts(df, n=2)
-    assert list(out.columns) == [
-        "rank",
-        "account_id",
-        "total_cost",
-        "share_of_total_cost",
-    ]
-    assert list(out["rank"]) == [1, 2]
-    assert list(out["account_id"]) == [1, 2]
-    assert list(out["total_cost"]) == [10.0, 4.0]
-    assert out.loc[0, "share_of_total_cost"] == 10.0 / 14.0
-
-
-def test_rows_per_account_day_stats():
-    df = _df_small()
-    stats = rows_per_account_day_stats(df, cap=2)
-    # Account-days present: (1,01-01)=2 rows, (1,01-02)=1 row, (2,01-01)=3 rows => max=3
-    assert stats["max"] == 3.0
-    assert stats["n_account_days"] == 3.0
-    assert stats["n_over_cap"] == 1.0  # only (2,01-01) has 3>2
-    assert stats["pct_over_cap"] == 1.0 / 3.0
-
-
-def test_distribution_stats():
-    s = pd.Series([0.0, 10.0, 20.0, 20.0])
-    stats = distribution_stats(s)
-    assert stats["mean"] == 12.5
-    assert stats["median"] == 15.0
-    assert stats["min"] == 0.0
-    assert stats["max"] == 20.0
-
-
-def test_histogram_table_counts_sum():
-    s = pd.Series([0, 1, 1, 2, 2, 2], dtype=float)
-    hist = histogram_table(s, bins=3)
-    assert set(hist.columns) == {"bin_left", "bin_right", "count"}
-    assert int(hist["count"].sum()) == 6
-
-
-def test_delta_helpers():
-    assert delta_abs(10, 7) == 3.0
-    assert delta_pct(10, 5) == 1.0
-    assert delta_pct(0, 0) == 0.0
-    assert delta_pct(2, 0) == 1.0
-    d_abs, d_pct = delta(10, 7)
-    assert d_abs == 3.0
-    assert abs(d_pct - (3.0 / 7.0)) < 1e-12
-
-
-def test_missing_columns_raise():
-    df = pd.DataFrame([{"account_id": 1}])
-    with pytest.raises(ValidationError):
-        total_cost_sum(df)
-    with pytest.raises(ValidationError):
-        active_account_days(df)
-    with pytest.raises(ValidationError):
-        rows_per_account_day_stats(df)
-
-
-def test_empty_df_ok():
-    df = pd.DataFrame(columns=["account_id", "date", "chat_id", "chat_type", "total_cost"])
-    assert active_users(df) == 0
-    assert active_account_days(df) == 0
-    assert total_cost_sum(df) == 0.0
-    assert dials_analyzed(df) == 0
+    churn = kd.user_churn(today, yest)
+    assert churn.new_users == 1  # account 1
+    assert churn.churned_users == 1  # account 3
+    assert churn.net_change == 0  # 2 active today - 2 active yesterday

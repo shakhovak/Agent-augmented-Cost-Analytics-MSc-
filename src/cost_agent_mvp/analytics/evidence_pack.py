@@ -1,247 +1,280 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from cost_agent_mvp.analytics.kpi_definitions import (
-    active_account_days,
-    active_users,
-    avg_cost_per_account_diluted,
-    avg_cost_per_active_account_day,
-    avg_cost_per_active_service_account,
-    component_costs_sum,
-    delta_abs,
-    delta_pct,
-    dials_analyzed,
-    distribution_stats,
-    histogram_table,
-    rows_per_account_day_stats,
-    service_mix_share,
-    top_accounts,
-    total_cost_sum,
+    build_daily_series,
+    per_account_day_costs,  # NEW (distribution foundation)
+    service_combo_counts,
+    user_churn,
 )
-from cost_agent_mvp.core.errors import ValidationError
+from cost_agent_mvp.viz.chart_specs import SERVICE_COST_COLUMNS, SERVICE_LABELS
 
 EvidencePack = dict[str, pd.DataFrame]
 
 
-def _require_columns(df: pd.DataFrame, cols: list[str]) -> None:
-    missing = [c for c in cols if c not in df.columns]
-    if missing:
-        raise ValidationError(f"Missing required columns for evidence pack: {missing}")
-
-
-def _filter_day(df: pd.DataFrame, day: date) -> pd.DataFrame:
-    _require_columns(df, ["date"])
-    return df[df["date"] == day]
-
-
-def _filter_range(df: pd.DataFrame, start: date, end: date) -> pd.DataFrame:
-    _require_columns(df, ["date"])
-    return df[(df["date"] >= start) & (df["date"] <= end)]
-
-
-def _kpi_row(report_day: date, cur: dict[str, float], prev: dict[str, float]) -> pd.DataFrame:
-    """Build a single-row KPI table with current, previous, and deltas."""
-    row: dict[str, Any] = {"date": report_day}
-
-    for name, cur_val in cur.items():
-        prev_val = float(prev.get(name, 0.0))
-        row[name] = float(cur_val)
-        row[f"{name}_prev"] = prev_val
-        row[f"{name}_delta_abs"] = float(delta_abs(cur_val, prev_val))
-        row[f"{name}_delta_pct"] = float(delta_pct(cur_val, prev_val))
-
-    return pd.DataFrame([row])
+def _ensure_date(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["date"] = pd.to_datetime(out["date"]).dt.date
+    return out
 
 
 def build_standard_daily_evidence(
     df_all: pd.DataFrame,
     report_day: date,
+    *,
     trend_days: int = 7,
-    top_n: int = 10,
-    cap: int | None = None,
+    top_accounts_n: int = 10,
+    hist_bins: int = 30,
 ) -> EvidencePack:
     """
-    Build a deterministic Evidence Pack for the "Standard Daily Report".
-
-    Required v0 outputs (dict of DataFrames):
-      - kpis: single-row table with current + previous + deltas
-      - trend_daily: date-level trend for last N days
-      - service_breakdown: component/service cost mix for report_day
-      - top_accounts: top N accounts by total_cost for report_day
-
-    Notes:
-      - df_all must be type-normalized (date column is datetime.date).
-      - If report_day is missing entirely from df_all (no rows), raises ValidationError.
-      - If previous day has no rows, previous KPIs evaluate to 0 deterministically.
-      - cap is optional and is used only for rows-per-account-day diagnostics.
+    Evidence pack tailored to the dashboard:
+    - excludes dialog from "services"
+    - excludes rows where the included service_total == 0
     """
-    if trend_days < 2:
-        raise ValidationError("trend_days must be >= 2")
-    if top_n <= 0:
-        raise ValidationError("top_n must be positive")
+    df_all = _ensure_date(df_all)
 
-    prev_day = report_day - timedelta(days=1)
-    trend_start = report_day - timedelta(days=trend_days - 1)
+    today = df_all[df_all["date"] == report_day].copy()
+    yesterday = df_all[df_all["date"] == (report_day - timedelta(days=1))].copy()
 
-    df_today = _filter_day(df_all, report_day)
-    if df_today.empty:
-        raise ValidationError(f"No data for report_day={report_day} (no rows with this date).")
+    # -------- Trend window
+    start = report_day - timedelta(days=trend_days - 1)
+    days = [start + timedelta(days=i) for i in range(trend_days)]
+    trend_daily = build_daily_series(df_all, days)
 
-    df_prev = _filter_day(df_all, prev_day)
-    df_trend = _filter_range(df_all, trend_start, report_day)
-
-    # -------------------------
-    # KPIs (today vs previous)
-    # -------------------------
-    # Keep this compact & narrative-friendly (8–12 KPIs).
-    cur_kpis = {
-        "total_cost": float(total_cost_sum(df_today)),
-        "active_users": float(active_users(df_today)),
-        "active_account_days": float(active_account_days(df_today)),
-        "dials_analyzed": float(dials_analyzed(df_today)),
-        "avg_cost_per_account": float(avg_cost_per_account_diluted(df_today)),
-        "avg_cost_per_active_account_day": float(avg_cost_per_active_account_day(df_today)),
-        "avg_cost_per_active_service_account": float(avg_cost_per_active_service_account(df_today)),
+    # -------- KPIs (single-row table)
+    churn = user_churn(today, yesterday)
+    kpi_row = {
+        "date": report_day,
+        "active_users": float(
+            trend_daily.loc[trend_daily["date"] == report_day, "active_users"].iloc[0]
+        ),
+        "active_users_prev": (
+            float(
+                trend_daily.loc[
+                    trend_daily["date"] == (report_day - timedelta(days=1)),
+                    "active_users",
+                ].iloc[0]
+            )
+            if (report_day - timedelta(days=1)) in set(trend_daily["date"])
+            else 0.0
+        ),
+        "new_users": float(churn.new_users),
+        "churned_users": float(churn.churned_users),
+        "net_user_change": float(churn.net_change),
+        "total_cost_services": float(
+            trend_daily.loc[trend_daily["date"] == report_day, "total_cost_services"].iloc[0]
+        ),
+        "avg_cost_per_active_account_day": float(
+            trend_daily.loc[
+                trend_daily["date"] == report_day, "avg_cost_per_active_account_day"
+            ].iloc[0]
+        ),
+        "avg_cost_per_active_account_day_prev": (
+            float(
+                trend_daily.loc[
+                    trend_daily["date"] == (report_day - timedelta(days=1)),
+                    "avg_cost_per_active_account_day",
+                ].iloc[0]
+            )
+            if (report_day - timedelta(days=1)) in set(trend_daily["date"])
+            else 0.0
+        ),
+        "p95_cost_per_account_day": float(
+            trend_daily.loc[trend_daily["date"] == report_day, "p95_cost_per_account_day"].iloc[0]
+        ),
+        "p95_cost_per_account_day_prev": (
+            float(
+                trend_daily.loc[
+                    trend_daily["date"] == (report_day - timedelta(days=1)),
+                    "p95_cost_per_account_day",
+                ].iloc[0]
+            )
+            if (report_day - timedelta(days=1)) in set(trend_daily["date"])
+            else 0.0
+        ),
+        "pct_accounts_above_cap": float(
+            trend_daily.loc[trend_daily["date"] == report_day, "pct_accounts_above_cap"].iloc[0]
+        ),
+        "pct_accounts_above_cap_prev": (
+            float(
+                trend_daily.loc[
+                    trend_daily["date"] == (report_day - timedelta(days=1)),
+                    "pct_accounts_above_cap",
+                ].iloc[0]
+            )
+            if (report_day - timedelta(days=1)) in set(trend_daily["date"])
+            else 0.0
+        ),
+        "avg_margin_per_account_day": float(
+            trend_daily.loc[trend_daily["date"] == report_day, "avg_margin_per_account_day"].iloc[0]
+        ),
+        "avg_margin_per_account_day_prev": (
+            float(
+                trend_daily.loc[
+                    trend_daily["date"] == (report_day - timedelta(days=1)),
+                    "avg_margin_per_account_day",
+                ].iloc[0]
+            )
+            if (report_day - timedelta(days=1)) in set(trend_daily["date"])
+            else 0.0
+        ),
+        "total_cost_services_prev": (
+            float(
+                trend_daily.loc[
+                    trend_daily["date"] == (report_day - timedelta(days=1)),
+                    "total_cost_services",
+                ].iloc[0]
+            )
+            if (report_day - timedelta(days=1)) in set(trend_daily["date"])
+            else 0.0
+        ),
+        "dials_analyzed": float(
+            trend_daily.loc[trend_daily["date"] == report_day, "dials_analyzed"].iloc[0]
+        ),
+        "dials_analyzed_prev": (
+            float(
+                trend_daily.loc[
+                    trend_daily["date"] == (report_day - timedelta(days=1)),
+                    "dials_analyzed",
+                ].iloc[0]
+            )
+            if (report_day - timedelta(days=1)) in set(trend_daily["date"])
+            else 0.0
+        ),
     }
 
-    prev_kpis = {
-        "total_cost": float(total_cost_sum(df_prev)),
-        "active_users": float(active_users(df_prev)),
-        "active_account_days": float(active_account_days(df_prev)),
-        "dials_analyzed": float(dials_analyzed(df_prev)),
-        "avg_cost_per_account": float(avg_cost_per_account_diluted(df_prev)),
-        "avg_cost_per_active_account_day": float(avg_cost_per_active_account_day(df_prev)),
-        "avg_cost_per_active_service_account": float(avg_cost_per_active_service_account(df_prev)),
-    }
+    # deltas
+    def _delta_abs(a: float, b: float) -> float:
+        return float(a - b)
 
-    # Add cap / row-density diagnostics as KPI fields (flattened)
-    rows_stats_today = rows_per_account_day_stats(df_today, cap=cap)
-    rows_stats_prev = (
-        rows_per_account_day_stats(df_prev, cap=cap)
-        if not df_prev.empty
-        else dict.fromkeys(rows_stats_today.keys(), 0.0)
+    def _delta_pct(a: float, b: float) -> float:
+        return float((a - b) / b) if b else 0.0
+
+    for base in [
+        "active_users",
+        "avg_cost_per_active_account_day",
+        "p95_cost_per_account_day",
+        "pct_accounts_above_cap",
+        "avg_margin_per_account_day",
+        "total_cost_services",
+        "dials_analyzed",
+    ]:
+        kpi_row[f"{base}_delta_abs"] = _delta_abs(kpi_row[base], kpi_row[f"{base}_prev"])
+        kpi_row[f"{base}_delta_pct"] = _delta_pct(kpi_row[base], kpi_row[f"{base}_prev"])
+    kpis = pd.DataFrame([kpi_row])
+
+    # -------- Service breakdown (mix) for report_day
+    # Use service costs only
+    service_totals = {}
+    for col in SERVICE_COST_COLUMNS:
+        service_totals[col] = float(today[col].sum())
+
+    total_services = float(sum(service_totals.values()))
+    breakdown_rows = []
+    for col in SERVICE_COST_COLUMNS:
+        cost = service_totals[col]
+        breakdown_rows.append(
+            {
+                "date": report_day,
+                "component": col,
+                "label": SERVICE_LABELS.get(col, col),
+                "cost": cost,
+                "share_of_total": (float(cost / total_services) if total_services else 0.0),
+            }
+        )
+    service_breakdown = (
+        pd.DataFrame(breakdown_rows).sort_values("cost", ascending=False).reset_index(drop=True)
     )
 
-    # We only include the most interpretable row-density metrics in the KPI row
-    for key in ["p95", "max", "n_over_cap", "pct_over_cap"]:
-        cur_kpis[f"rows_per_account_day_{key}"] = float(rows_stats_today.get(key, 0.0))
-        prev_kpis[f"rows_per_account_day_{key}"] = float(rows_stats_prev.get(key, 0.0))
+    # -------- Service usage totals (for plot E)
+    service_usage_totals = service_breakdown[["date", "label", "cost"]].copy()
 
-    kpis_df = _kpi_row(report_day, cur_kpis, prev_kpis)
-
-    # -------------------------
-    # Trend table (last N days)
-    # -------------------------
-    if df_trend.empty:
-        trend_df = pd.DataFrame(
+    # -------- Top accounts by total service cost
+    if today.empty:
+        top_accounts = pd.DataFrame(
             columns=[
                 "date",
-                "total_cost",
-                "active_users",
-                "active_account_days",
-                "dials_analyzed",
+                "rank",
+                "account_id",
+                "total_cost_services",
+                "share_of_total_cost",
             ]
         )
     else:
-        daily_total = df_trend.groupby("date", as_index=False)["total_cost"].sum()
-
-        au_rows = []
-        aad_rows = []
-        dials_rows = []
-        for d, part in df_trend.groupby("date"):
-            au_rows.append({"date": d, "active_users": active_users(part)})
-            aad_rows.append({"date": d, "active_account_days": active_account_days(part)})
-            dials_rows.append({"date": d, "dials_analyzed": dials_analyzed(part)})
-
-        au_df = pd.DataFrame(au_rows)
-        aad_df = pd.DataFrame(aad_rows)
-        dials_df = pd.DataFrame(dials_rows)
-
-        trend_df = (
-            daily_total.merge(au_df, on="date", how="left")
-            .merge(aad_df, on="date", how="left")
-            .merge(dials_df, on="date", how="left")
-            .sort_values("date", ascending=True)
+        tmp = today.copy()
+        tmp["total_cost_services_row"] = tmp[list(SERVICE_COST_COLUMNS)].sum(axis=1)
+        tmp = tmp[tmp["total_cost_services_row"] > 0]
+        per_acc = (
+            tmp.groupby("account_id", as_index=False)["total_cost_services_row"]
+            .sum()
+            .rename(columns={"total_cost_services_row": "total_cost_services"})
+        )
+        per_acc = (
+            per_acc.sort_values("total_cost_services", ascending=False)
+            .head(top_accounts_n)
             .reset_index(drop=True)
         )
+        per_acc["rank"] = np.arange(1, len(per_acc) + 1)
+        per_acc["date"] = report_day
+        per_acc["share_of_total_cost"] = (
+            per_acc["total_cost_services"] / total_services if total_services else 0.0
+        )
+        top_accounts = per_acc[
+            ["date", "rank", "account_id", "total_cost_services", "share_of_total_cost"]
+        ]
 
-    # -------------------------
-    # Service breakdown (today)
-    # -------------------------
-
-    mix = service_mix_share(df_today)  # component, cost, share
-    if mix.empty:
-        service_df = pd.DataFrame(columns=["date", "component", "cost", "share_of_total"])
-    else:
-        service_df = mix.rename(columns={"share": "share_of_total"}).copy()
-        service_df.insert(0, "date", report_day)
-        service_df = service_df.sort_values("cost", ascending=False).reset_index(drop=True)
-
-    # -------------------------
-    # Top accounts (today)
-    # -------------------------
-    top_df = top_accounts(df_today, n=top_n)  # rank, account_id, total_cost, share_of_total_cost
-    if top_df.empty:
-        top_accounts_df = pd.DataFrame(
-            columns=["date", "rank", "account_id", "total_cost", "share_of_total_cost"]
+    # -------- Distribution (plot A)
+    dist_series = per_account_day_costs(today)
+    if dist_series.empty:
+        distribution_hist = pd.DataFrame(columns=["bin_left", "bin_right", "count"])
+        distribution_stats = pd.DataFrame(
+            [{"median": 0.0, "min": 0.0, "max": 0.0, "std": 0.0, "n": 0}]
         )
     else:
-        top_accounts_df = top_df.copy()
-        top_accounts_df.insert(0, "date", report_day)
+        counts, edges = np.histogram(dist_series.values, bins=hist_bins)
+        distribution_hist = pd.DataFrame(
+            {
+                "bin_left": edges[:-1],
+                "bin_right": edges[1:],
+                "count": counts,
+            }
+        )
+        distribution_stats = pd.DataFrame(
+            [
+                {
+                    "median": float(np.median(dist_series.values)),
+                    "min": float(np.min(dist_series.values)),
+                    "max": float(np.max(dist_series.values)),
+                    "std": (
+                        float(np.std(dist_series.values, ddof=1)) if len(dist_series) > 1 else 0.0
+                    ),
+                    "n": int(len(dist_series)),
+                }
+            ]
+        )
 
-    # -------------------------
-    # Optional extras (useful later)
-    # -------------------------
-
-    # Extra: component absolute totals (not shares) – sometimes handy
-
-    comps = component_costs_sum(df_today)
-    service_totals_df = pd.DataFrame(
-        [{"date": report_day, "component": k, "cost": float(v)} for k, v in sorted(comps.items())],
-        columns=["date", "component", "cost"],
+    # -------- Service combinations (plot D)
+    combo = service_combo_counts(today)
+    service_combinations = pd.DataFrame(
+        [{"date": report_day, "label": k, "active_users": int(v)} for k, v in combo.items()]
     )
 
-    # Extra: distribution for total_cost_per_account (hist + stats)
-    # Using per-account totals from top_accounts_df isn't complete; compute from df_today instead.
-    # For histogram: we approximate per-account by grouping total_cost by account_id and summing.
-    if "account_id" in df_today.columns and "total_cost" in df_today.columns:
-        per_acc = df_today.groupby("account_id", as_index=False)["total_cost"].sum()["total_cost"]
-    else:
-        per_acc = pd.Series([], dtype=float)
-
-    dist_hist = histogram_table(per_acc, bins=20)
-    dist_hist["metric"] = "total_cost_per_account"
-    dist_stats_df = pd.DataFrame([{"date": report_day, **distribution_stats(per_acc)}])
-
-    # Placeholder for later rule-based exceptions (kept from M1 style)
-    exceptions = pd.DataFrame(
-        columns=[
-            "date",
-            "level",
-            "entity_id",
-            "rule_id",
-            "severity",
-            "metric_value",
-            "baseline_value",
-            "delta_abs",
-            "delta_pct",
-            "supporting_notes",
-        ]
-    )
+    # -------- Dials & cost trends (plot F) — reuse trend_daily with relevant columns
+    dials_cost_trend = trend_daily[["date", "dials_analyzed", "total_cost_services"]].copy()
 
     return {
-        # REQUIRED v0 keys:
-        "kpis": kpis_df,
-        "trend_daily": trend_df,
-        "service_breakdown": service_df,
-        "top_accounts": top_accounts_df,
-        # OPTIONAL extras:
-        "service_totals": service_totals_df,
-        "distribution_hist": dist_hist,
-        "distribution_stats": dist_stats_df,
-        "exceptions_queue": exceptions,
+        "kpis": kpis,
+        "trend_daily": trend_daily,
+        "service_breakdown": service_breakdown,
+        "service_totals": service_usage_totals,
+        "top_accounts": top_accounts,
+        "distribution_hist": distribution_hist,
+        "distribution_stats": distribution_stats,
+        "service_combinations": service_combinations,
+        "dials_cost_trend": dials_cost_trend,
+        "exceptions_queue": pd.DataFrame(columns=["message"]),  # placeholder, keep contract stable
     }
