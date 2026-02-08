@@ -1,4 +1,4 @@
-"""Generate text summary (Stage 1: deterministic or template-based, no LLM yet)."""
+"""Deterministic daily summary grounded only in Evidence Pack tables (no LLM)."""
 
 from __future__ import annotations
 
@@ -7,135 +7,157 @@ import pandas as pd
 EvidencePack = dict[str, pd.DataFrame]
 
 
-def _fmt_money(x: float) -> str:
+def _fmt_money(x: object) -> str:
     try:
         return f"{float(x):,.2f}"
     except Exception:
         return str(x)
 
 
-def _fmt_pct(x: float) -> str:
+def _fmt_int(x: object) -> str:
+    try:
+        return f"{int(float(x)):,}"
+    except Exception:
+        return str(x)
+
+
+def _fmt_pct_from_fraction(x: object) -> str:
+    """Evidence deltas are fractions (e.g., 0.031 == 3.1%)."""
     try:
         return f"{float(x) * 100:.1f}%"
     except Exception:
         return str(x)
 
 
-def generate_daily_summary(evidence: EvidencePack, top_n: int = 5) -> str:
+def _trend_note(trend: pd.DataFrame) -> str:
     """
-    Deterministic summary for the Standard Daily Report.
-    Uses only the evidence pack tables (no LLM).
+    Deterministic 7-day trend note based only on trend_daily table.
+    Uses first and last points in the provided window.
+    """
+    if trend is None or trend.empty or len(trend) < 2:
+        return "7-day trend: Not available"
 
-    Expected tables:
-      - kpi_today_vs_yesterday (1 row)
-      - service_cost_breakdown
-      - top_accounts_by_total_cost
-      - top_accounts_by_delta
-      - distribution_stats (optional)
-      - exceptions_queue (optional)
+    # Prefer diluted cost metric if present, otherwise fall back
+    col = None
+    for c in ["avg_cost_per_active_account_day", "avg_cost_non_diluted"]:
+        if c in trend.columns:
+            col = c
+            break
+
+    if col is None:
+        return "7-day trend: Not available"
+
+    start = float(trend[col].iloc[0])
+    end = float(trend[col].iloc[-1])
+
+    direction = "flat"
+    if end > start:
+        direction = "up"
+    elif end < start:
+        direction = "down"
+
+    return f"7-day trend ({col}): {direction} ({_fmt_money(start)} → {_fmt_money(end)})"
+
+
+def generate_daily_summary(evidence: EvidencePack, top_n: int = 3) -> str:
     """
-    kpi = evidence.get("kpi_today_vs_yesterday", pd.DataFrame())
-    svc = evidence.get("service_cost_breakdown", pd.DataFrame())
-    top_cost = evidence.get("top_accounts_by_total_cost", pd.DataFrame())
-    top_delta = evidence.get("top_accounts_by_delta", pd.DataFrame())
-    dist_stats = evidence.get("distribution_stats", pd.DataFrame())
-    exc = evidence.get("exceptions_queue", pd.DataFrame())
+    Deterministic summary grounded only in Evidence Pack v0 output (E2).
+
+    Required content:
+      - today's total cost + delta vs previous period
+      - top 3 services by cost
+      - top 3 accounts by cost
+      - short 7-day trend note (from trend_daily)
+    """
+    # Evidence Pack v0 keys (per build_standard_daily_evidence)
+    kpi = evidence.get("kpis", pd.DataFrame())
+    service_breakdown = evidence.get("service_breakdown", pd.DataFrame())
+    top_accounts = evidence.get("top_accounts", pd.DataFrame())
+    trend = evidence.get("trend_daily", pd.DataFrame())
 
     lines: list[str] = []
     lines.append("Daily Cost Monitoring Summary")
     lines.append("=" * 30)
 
-    if not kpi.empty:
-        r = kpi.iloc[0].to_dict()
-        lines.append(f"Date: {r.get('date', '')}")
-        lines.append("")
-        lines.append(
-            f"Total cost: {_fmt_money(r.get('total_cost', 0.0))} "
-            f"({_fmt_pct(r.get('total_cost_delta_pct', 0.0))} vs previous day)"
-        )
-        lines.append(
-            f"Active users: {int(r.get('active_users', 0))} "
-            f"({_fmt_pct(r.get('active_users_delta_pct', 0.0))} vs previous day)"
-        )
-        lines.append(
-            f"Dials analyzed: {int(r.get('dials_analyzed', 0))} "
-            f"({_fmt_pct(r.get('dials_analyzed_delta_pct', 0.0))} vs previous day)"
-        )
-        lines.append(
-            f"Avg cost per account (diluted): {_fmt_money(r.get('avg_cost_per_account', 0.0))} "
-            f"({_fmt_pct(r.get('avg_cost_per_account_delta_pct', 0.0))} vs previous day)"
-        )
-        lines.append(
-            f"Avg cost per account (non-diluted): {_fmt_money(r.get('avg_cost_per_account_non_diluted', 0.0))} "
-            f"({_fmt_pct(r.get('avg_cost_per_account_non_diluted_delta_pct', 0.0))} vs previous day)"
-        )
-    else:
+    if kpi is None or kpi.empty:
         lines.append("KPI table is empty (no data for the selected day/window).")
+        return "\n".join(lines)
 
+    r = kpi.iloc[0].to_dict()
+    lines.append(f"Date: {r.get('date', '')}")
     lines.append("")
-    lines.append("Cost composition (top components):")
-    if not svc.empty and {"component", "cost", "share_of_total"}.issubset(svc.columns):
-        svc2 = svc.sort_values("cost", ascending=False).head(top_n)
-        for _, row in svc2.iterrows():
-            lines.append(
-                f"- {row['component']}: {_fmt_money(row['cost'])} ({_fmt_pct(row['share_of_total'])})"
-            )
-    else:
-        lines.append("- Not available")
 
-    lines.append("")
-    lines.append(f"Top {top_n} accounts by total cost:")
-    if not top_cost.empty and {"account_id", "total_cost", "share_of_total"}.issubset(
-        top_cost.columns
-    ):
-        tc = top_cost.head(top_n)
-        for _, row in tc.iterrows():
-            lines.append(
-                f"- account {int(row['account_id'])}: {_fmt_money(row['total_cost'])} "
-                f"({_fmt_pct(row['share_of_total'])} of total)"
-            )
-    else:
-        lines.append("- Not available")
+    # --- Total cost + delta
+    total_cost = r.get("total_cost_services", 0.0)
+    total_cost_delta_pct = r.get("total_cost_services_delta_pct", 0.0)
+    lines.append(
+        f"Total cost (services): {_fmt_money(total_cost)} "
+        f"({_fmt_pct_from_fraction(total_cost_delta_pct)} vs previous day)"
+    )
 
-    lines.append("")
-    lines.append(f"Top {top_n} accounts by day-over-day increase:")
-    if not top_delta.empty and {"account_id", "delta_abs", "delta_pct"}.issubset(top_delta.columns):
-        td = top_delta.head(top_n)
-        for _, row in td.iterrows():
-            lines.append(
-                f"- account {int(row['account_id'])}: +{_fmt_money(row['delta_abs'])} "
-                f"({_fmt_pct(row['delta_pct'])} vs previous day)"
-            )
-    else:
-        lines.append("- Not available")
-
-    if not dist_stats.empty:
-        lines.append("")
-        lines.append("Per-account total cost distribution (yesterday):")
-        s = dist_stats.iloc[0].to_dict()
+    # Optional (nice to have, still deterministic): active + churn + dials
+    if "active_users" in r:
         lines.append(
-            f"- mean: {_fmt_money(s.get('mean', 0.0))}, median: {_fmt_money(s.get('median', 0.0))}, "
-            f"p90: {_fmt_money(s.get('p90', 0.0))}, max: {_fmt_money(s.get('max', 0.0))}"
+            f"Active users: {_fmt_int(r.get('active_users', 0))} "
+            f"({_fmt_pct_from_fraction(r.get('active_users_delta_pct', 0.0))} vs previous day)"
+        )
+    if "new_users" in r and "churned_users" in r:
+        lines.append(
+            f"User churn: new={_fmt_int(r.get('new_users', 0))}, "
+            f"churned={_fmt_int(r.get('churned_users', 0))}, "
+            f"net={_fmt_int(r.get('net_user_change', 0))}"
+        )
+    if "dials_analyzed" in r:
+        lines.append(
+            f"Dials analyzed: {_fmt_int(r.get('dials_analyzed', 0))} "
+            f"({_fmt_pct_from_fraction(r.get('dials_analyzed_delta_pct', 0.0))} vs previous day)"
         )
 
+    # --- Top services by cost
     lines.append("")
-    exc_count = int(len(exc)) if isinstance(exc, pd.DataFrame) else 0
-    lines.append(f"Exceptions flagged: {exc_count}")
-    if exc_count > 0 and {"rule_id", "severity"}.issubset(exc.columns):
-        preview = exc.head(min(5, exc_count))
-        for _, row in preview.iterrows():
-            lines.append(f"- {row.get('severity', '')}: {row.get('rule_id', '')}")
+    lines.append(f"Top {top_n} services by cost:")
+    if (
+        service_breakdown is not None
+        and not service_breakdown.empty
+        and {"label", "cost"}.issubset(service_breakdown.columns)
+    ):
+        sb = service_breakdown.sort_values("cost", ascending=False).head(top_n)
+        for _, row in sb.iterrows():
+            share = row["share_of_total"] if "share_of_total" in sb.columns else None
+            if share is None:
+                lines.append(f"- {row['label']}: {_fmt_money(row['cost'])}")
+            else:
+                lines.append(
+                    f"- {row['label']}: {_fmt_money(row['cost'])} ({_fmt_pct_from_fraction(share)})"
+                )
+    else:
+        lines.append("- Not available")
 
+    # --- Top accounts by cost
     lines.append("")
-    lines.append("Recommended checks (generic):")
-    lines.append(
-        "- Review the top accounts and confirm whether the increase aligns with expected usage patterns."
-    )
-    lines.append(
-        "- If cost increased without usage growth, check routing/model changes or unusually expensive components."
-    )
-    lines.append(
-        "- If the service mix shifted (tasks vs classifications), validate upstream workflow volume and configuration."
-    )
+    lines.append(f"Top {top_n} accounts by cost:")
+    if (
+        top_accounts is not None
+        and not top_accounts.empty
+        and {"account_id", "total_cost_services"}.issubset(top_accounts.columns)
+    ):
+        ta = top_accounts.sort_values("total_cost_services", ascending=False).head(top_n)
+        for _, row in ta.iterrows():
+            share = row["share_of_total_cost"] if "share_of_total_cost" in ta.columns else None
+            if share is None:
+                lines.append(
+                    f"- account {int(row['account_id'])}: {_fmt_money(row['total_cost_services'])}"
+                )
+            else:
+                lines.append(
+                    f"- account {int(row['account_id'])}: {_fmt_money(row['total_cost_services'])} "
+                    f"({_fmt_pct_from_fraction(share)} of total)"
+                )
+    else:
+        lines.append("- Not available")
+
+    # --- 7-day trend note (from trend_daily)
+    lines.append("")
+    lines.append(_trend_note(trend))
 
     return "\n".join(lines)
