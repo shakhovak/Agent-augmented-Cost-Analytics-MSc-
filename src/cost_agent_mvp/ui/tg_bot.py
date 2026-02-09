@@ -91,6 +91,51 @@ def parse_yyyy_mm_dd(s: str) -> date:
     return datetime.strptime(s.strip(), "%Y-%m-%d").date()
 
 
+# -----------------------------
+# Dataset date range cache
+# -----------------------------
+
+
+_DATASET_DATE_RANGE: tuple[date, date] | None = None
+
+
+def get_dataset_date_range() -> tuple[date, date]:
+    """
+    Returns (min_date, max_date) available in CSV_PATH.
+    Cached in-memory for bot lifetime.
+    """
+    global _DATASET_DATE_RANGE
+    if _DATASET_DATE_RANGE is not None:
+        return _DATASET_DATE_RANGE
+
+    import pandas as pd
+
+    # fast read: only date column
+    df_dates = pd.read_csv(CSV_PATH, usecols=["date"])
+    ds = pd.to_datetime(df_dates["date"], errors="coerce").dropna().dt.date
+    if ds.empty:
+        # fallback: allow "yesterday UTC" only, but make it explicit
+        y = compute_yesterday_utc()
+        _DATASET_DATE_RANGE = (y, y)
+        return _DATASET_DATE_RANGE
+
+    _DATASET_DATE_RANGE = (min(ds), max(ds))
+    return _DATASET_DATE_RANGE
+
+
+def clamp_to_range(d: date, lo: date, hi: date) -> date:
+    if d < lo:
+        return lo
+    if d > hi:
+        return hi
+    return d
+
+
+def last_available_day() -> date:
+    lo, hi = get_dataset_date_range()
+    return hi
+
+
 def build_main_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -102,12 +147,29 @@ def build_main_keyboard() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="📅 Set report date (use /setdate YYYY-MM-DD)",
-                    callback_data="help:setdate",
+                    text="📅 Choose report day",
+                    callback_data="date:open",
                 )
             ],
             [InlineKeyboardButton(text="🧪 Toggle LLM summary", callback_data="toggle:llm")],
             [InlineKeyboardButton(text="🧾 Toggle debug (verifier)", callback_data="toggle:debug")],
+        ]
+    )
+
+
+def build_date_picker_keyboard(selected: date) -> InlineKeyboardMarkup:
+    label = selected.isoformat()
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="◀️ Prev", callback_data="date:prev"),
+                InlineKeyboardButton(text=f"✅ Run {label}", callback_data="date:run"),
+                InlineKeyboardButton(text="Next ▶️", callback_data="date:next"),
+            ],
+            [
+                InlineKeyboardButton(text="🏁 Last available", callback_data="date:last"),
+                InlineKeyboardButton(text="↩️ Back", callback_data="date:back"),
+            ],
         ]
     )
 
@@ -254,9 +316,18 @@ async def cmd_setdate(message: Message) -> None:
         await message.answer("Invalid date format. Use YYYY-MM-DD (e.g., 2025-12-02).")
         return
 
+    lo, hi = get_dataset_date_range()
+    if d < lo or d > hi:
+        await message.answer(
+            f"Date {d.isoformat()} is outside the dataset range "
+            f"({lo.isoformat()} … {hi.isoformat()}).",
+            reply_markup=build_main_keyboard(),
+        )
+        return
+
     session.report_day = d
     await message.answer(
-        f"✅ Report day set to: {d.isoformat()}.\nNow run /report or press the button.",
+        f"✅ Report day set to: {d.isoformat()}.\nPress 📅 Choose report day or run the report.",
         reply_markup=build_main_keyboard(),
     )
 
@@ -404,6 +475,122 @@ async def cb_help_setdate(callback: CallbackQuery) -> None:
         callback.message.chat.id,
         "To set a specific report day, use:\n/setdate YYYY-MM-DD\nExample:\n/setdate 2025-12-02",
     )
+
+
+# -----------------------------
+# Date picker callbacks
+# -----------------------------
+
+
+@dp.callback_query(F.data == "date:open")
+async def cb_date_open(callback: CallbackQuery) -> None:
+    session = get_session(callback.from_user.id)
+    lo, hi = get_dataset_date_range()
+
+    # Start from session day if set, else last available day
+    d = session.report_day or hi
+    d = clamp_to_range(d, lo, hi)
+    session.report_day = d
+
+    await callback.answer()
+    await bot.send_message(
+        callback.message.chat.id,
+        f"📅 Select report day:\n"
+        f"• Selected: {d.isoformat()}\n"
+        f"• Available: {lo.isoformat()} … {hi.isoformat()}",
+        reply_markup=build_date_picker_keyboard(d),
+    )
+
+
+@dp.callback_query(F.data == "date:prev")
+async def cb_date_prev(callback: CallbackQuery) -> None:
+    session = get_session(callback.from_user.id)
+    lo, hi = get_dataset_date_range()
+    d = session.report_day or hi
+    d = clamp_to_range(d - timedelta(days=1), lo, hi)
+    session.report_day = d
+
+    await callback.answer()
+    await bot.edit_message_reply_markup(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        reply_markup=build_date_picker_keyboard(d),
+    )
+
+
+@dp.callback_query(F.data == "date:next")
+async def cb_date_next(callback: CallbackQuery) -> None:
+    session = get_session(callback.from_user.id)
+    lo, hi = get_dataset_date_range()
+    d = session.report_day or hi
+    d = clamp_to_range(d + timedelta(days=1), lo, hi)
+    session.report_day = d
+
+    await callback.answer()
+    await bot.edit_message_reply_markup(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        reply_markup=build_date_picker_keyboard(d),
+    )
+
+
+@dp.callback_query(F.data == "date:last")
+async def cb_date_last(callback: CallbackQuery) -> None:
+    session = get_session(callback.from_user.id)
+    lo, hi = get_dataset_date_range()
+    d = hi
+    session.report_day = d
+
+    await callback.answer()
+    await bot.edit_message_reply_markup(
+        chat_id=callback.message.chat.id,
+        message_id=callback.message.message_id,
+        reply_markup=build_date_picker_keyboard(d),
+    )
+
+
+@dp.callback_query(F.data == "date:back")
+async def cb_date_back(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await bot.send_message(
+        callback.message.chat.id,
+        "↩️ Back to main menu.",
+        reply_markup=build_main_keyboard(),
+    )
+
+
+@dp.callback_query(F.data == "date:run")
+async def cb_date_run(callback: CallbackQuery) -> None:
+    session = get_session(callback.from_user.id)
+    lo, hi = get_dataset_date_range()
+
+    report_day = session.report_day or hi
+    report_day = clamp_to_range(report_day, lo, hi)
+
+    await callback.answer()
+    await bot.send_chat_action(chat_id=callback.message.chat.id, action=ChatAction.TYPING)
+
+    try:
+        out = orchestrator.run_button_standard_daily(
+            csv_path=CSV_PATH,
+            report_day=report_day,
+            use_llm_analyst=session.use_llm,
+            build_dashboard=True,
+        )
+        await send_run_artifacts(
+            callback.message.chat.id,
+            answer_text=out.answer_text,
+            dashboard_png=out.dashboard_png,
+            run_id=out.run_id,
+            verifier_status=out.verifier.status,
+            show_debug=session.show_debug,
+        )
+    except Exception as exc:
+        logger.exception("Failed to run report for selected day: %s", exc)
+        await bot.send_message(
+            callback.message.chat.id,
+            "❌ Error while generating report. Check server logs.",
+        )
 
 
 # -----------------------------
