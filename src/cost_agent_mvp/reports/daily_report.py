@@ -12,7 +12,12 @@ from uuid import uuid4
 import pandas as pd
 import yaml
 
-from cost_agent_mvp.analytics.evidence_pack import EvidencePack, build_standard_daily_evidence
+from cost_agent_mvp.agent.analyst import Analyst
+from cost_agent_mvp.agent.verifier import verify_numeric_fidelity
+from cost_agent_mvp.analytics.evidence_pack import (
+    EvidencePack,
+    build_standard_daily_evidence,
+)
 from cost_agent_mvp.core.constants import SafetyLimits
 from cost_agent_mvp.core.errors import ConfigError
 from cost_agent_mvp.core.types import RunArtifacts, RunRecord
@@ -44,6 +49,50 @@ def _export_evidence_pack(evidence: EvidencePack, out_dir: str) -> None:
         df.to_csv(Path(out_dir) / f"{name}.csv", index=False)
 
 
+def _to_jsonable(obj):
+    """Best-effort conversion to JSON-serialisable primitives (deterministic)."""
+    from dataclasses import is_dataclass
+
+    if obj is None or isinstance(obj, str | int | float | bool):
+        return obj
+
+    # numpy / pandas scalar types
+    if hasattr(obj, "item") and callable(obj.item):
+        try:
+            return obj.item()
+        except Exception:
+            pass
+
+    if isinstance(obj, dict):
+        return {str(k): _to_jsonable(v) for k, v in obj.items()}
+
+    if isinstance(obj, list | tuple | set):
+        return [_to_jsonable(v) for v in obj]
+
+    # Pydantic v2
+    if hasattr(obj, "model_dump") and callable(obj.model_dump):
+        try:
+            return _to_jsonable(obj.model_dump())
+        except Exception:
+            pass
+
+    # dataclasses
+    if is_dataclass(obj):
+        try:
+            return _to_jsonable(asdict(obj))
+        except Exception:
+            pass
+
+    # last resort: object __dict__
+    if hasattr(obj, "__dict__"):
+        try:
+            return _to_jsonable(vars(obj))
+        except Exception:
+            pass
+
+    return str(obj)
+
+
 def run_standard_daily_report(
     csv_path: str,
     report_day: date,
@@ -54,6 +103,11 @@ def run_standard_daily_report(
     limits: SafetyLimits | None = None,
     top_n_override: int | None = None,
     trend_days_override: int | None = None,
+    narrative_mode: str = "deterministic",
+    mock_llm: bool = False,
+    llm_temperature: float = 0.2,
+    llm_max_output_tokens: int = 3000,
+    prompts_dir: str | None = None,
 ) -> RunArtifacts:
     """
     Orchestrator for the "Standard Daily Report" button.
@@ -109,6 +163,9 @@ def run_standard_daily_report(
         top_accounts_n=top_n,
     )
 
+    # Export evidence tables early so they exist even if later steps fail (e.g., LLM).
+    _export_evidence_pack(evidence, evidence_dir)
+
     # Build dashboard
     dashboard_png = str(Path(output_dir) / "dashboard.png")
     build_standard_daily_dashboard(
@@ -117,13 +174,54 @@ def run_standard_daily_report(
         title=f"{tpl.get('title', 'Standard Daily Report')} — {report_day.isoformat()}",
     )
 
-    # Summary text
+    # Summary text (deterministic or LLM)
     summary_txt_path = str(Path(output_dir) / "summary.txt")
-    summary_text = generate_daily_summary(evidence=evidence, top_n=min(5, top_n))
-    Path(summary_txt_path).write_text(summary_text, encoding="utf-8")
 
-    # Export evidence tables
-    _export_evidence_pack(evidence, evidence_dir)
+    verifier_payload: dict | None = None
+    llm_meta: dict | None = None
+
+    if narrative_mode not in ("deterministic", "llm"):
+        raise ValueError("narrative_mode must be 'deterministic' or 'llm'")
+
+    if narrative_mode == "deterministic":
+        summary_text = generate_daily_summary(evidence=evidence, top_n=min(5, top_n))
+        Path(summary_txt_path).write_text(summary_text, encoding="utf-8")
+        verifier_payload = {"status": "not_enabled_deterministic"}
+    else:
+        analyst = Analyst(prompts_dir=prompts_dir)
+        res = analyst.generate(
+            evidence=evidence,
+            mode="daily_report",
+            user_text="",
+            temperature=llm_temperature,
+            max_output_tokens=llm_max_output_tokens,
+            mock_mode=mock_llm,
+        )
+        summary_text = res.answer_text
+        Path(summary_txt_path).write_text(summary_text, encoding="utf-8")
+
+        # Deterministic verifier (numeric fidelity + direction checks)
+        vres = verify_numeric_fidelity(answer_text=summary_text, evidence=evidence)
+        verifier_payload = {
+            "status": getattr(vres, "status", "unknown"),
+            "passed": getattr(vres, "passed", False),
+            "score": getattr(vres, "score", None),
+            "issues": getattr(vres, "issues", []) or [],
+        }
+        verifier_json_path = str(Path(output_dir) / "verifier.json")
+        verifier_payload = _to_jsonable(verifier_payload)
+        Path(verifier_json_path).write_text(
+            json.dumps(verifier_payload, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        llm_meta = {
+            "model": res.model,
+            "prompt_chars": res.prompt_chars,
+            "mock_llm": mock_llm,
+            "temperature": llm_temperature,
+            "max_output_tokens": llm_max_output_tokens,
+        }
 
     # Build run record (minimal, but solid for research)
     artifacts = RunArtifacts(
@@ -150,12 +248,17 @@ def run_standard_daily_report(
         query_specs=[],
         lineage=[],
         artifacts=artifacts,
-        verifier={"status": "not_enabled_stage_1"},
+        verifier=verifier_payload or {"status": "not_enabled_stage_1"},
         notes={
             "dataset_name": dataset_name,
             "dataset_version": backend.dataset_version,
             "csv_path": os.path.abspath(csv_path),
             "report_day": report_day.isoformat(),
+            "narrative_mode": narrative_mode,
+            "llm_meta": llm_meta,
+            "verifier_json": (
+                str(Path(output_dir) / "verifier.json") if narrative_mode == "llm" else None
+            ),
             "template": {
                 "title": tpl.get("title"),
                 "description": tpl.get("description"),
