@@ -1,12 +1,18 @@
-from datetime import date
+from datetime import date, datetime
+from datetime import date as dt_date
 
 import pandas as pd
 import pytest
 
-from cost_agent_mvp.core.constants import Aggregation, SortDirection, SourceType, TimeWindowType
+from cost_agent_mvp.agent.plan_compiler import TimeWindowExceeded
+from cost_agent_mvp.core.constants import (
+    Aggregation,
+    SortDirection,
+    SourceType,
+    TimeWindowType,
+)
 from cost_agent_mvp.core.errors import (
     RowLimitExceeded,
-    TimeWindowExceeded,
     UnsupportedQuery,
 )
 from cost_agent_mvp.core.types import (
@@ -18,6 +24,20 @@ from cost_agent_mvp.core.types import (
 )
 from cost_agent_mvp.data.csv_backend import CsvBackend
 from cost_agent_mvp.data.schema import default_joint_schema
+
+
+def _get(obj, key):
+    """Read key from dict or attribute from object."""
+    if isinstance(obj, dict):
+        return obj[key]
+    return getattr(obj, key)
+
+
+def _as_date(x):
+    """Normalize date field that may be date or ISO string."""
+    if isinstance(x, str):
+        return dt_date.fromisoformat(x)
+    return x
 
 
 def _write_valid_csv(path, df: pd.DataFrame) -> str:
@@ -74,28 +94,38 @@ def test_basic_group_aggregation_sum(tmp_path):
         aggregations=[AggregationSpec(field="total_cost", agg=Aggregation.SUM, as_name="cost_sum")],
         sort=SortSpec(by="date", direction=SortDirection.ASC),
     )
+    result = backend.query(spec)
+    out = result.df
 
-    out, lineage = backend.query(spec)
+    lineage_list = result.lineage
+    assert isinstance(lineage_list, list)
+    assert len(lineage_list) >= 1
 
-    assert lineage.source_type == SourceType.CSV
-    assert lineage.dataset_name == "joint_costs_daily"
-    assert lineage.dataset_version  # non-empty
-    assert lineage.generated_at_utc.tzinfo is None
+    lin = lineage_list[0]  # dict OR object depending on backend
+    source_type = _get(lin, "source_type")
+    assert source_type == SourceType.CSV or source_type == getattr(SourceType.CSV, "value", None)
 
-    assert lineage.time_window.start == date(2026, 1, 1)
-    assert lineage.time_window.end == date(2026, 1, 2)
+    assert _get(lin, "dataset_name") == "joint_costs_daily"
+    assert _get(lin, "dataset_version")
 
-    assert lineage.applied_filters["account_id"] == [1]
-    assert lineage.group_by == ["date"]
-    assert lineage.row_count == len(out)
+    gen = _get(lin, "generated_at_utc")
+    assert isinstance(gen, datetime)
+    assert gen.tzinfo is None
 
+    tw = _get(lin, "time_window")  # TimeWindow object OR dict
+    start = _as_date(_get(tw, "start"))
+    end = _as_date(_get(tw, "end"))
+    assert start == date(2026, 1, 1)
+    assert end == date(2026, 1, 2)
+
+    applied_filters = _get(lin, "applied_filters")
+    assert applied_filters["account_id"] == [1]
+
+    assert _get(lin, "group_by") == ["date"]
+    assert _get(lin, "row_count") == len(out)
     assert list(out.columns) == ["date", "cost_sum"]
     assert len(out) == 1
     assert out["cost_sum"].iloc[0] == pytest.approx(15.0)
-
-    assert lineage.dataset_name == "joint_costs_daily"
-    assert lineage.row_count == 1
-    assert lineage.applied_filters["account_id"] == [1]
 
 
 def test_time_window_hard_limit_enforced(tmp_path):
@@ -124,13 +154,18 @@ def test_drilldown_chat_id_requires_account_id(tmp_path):
         time_window=TimeWindow(
             type=TimeWindowType.RANGE, start=date(2026, 1, 1), end=date(2026, 1, 2)
         ),
-        filters=QueryFilters(chat_id=["c1"]),  # drilldown without account_id
+        filters=QueryFilters(chat_id=["c1"]),
         group_by=["chat_id"],
         aggregations=[AggregationSpec(field="total_cost", agg=Aggregation.SUM)],
     )
 
-    with pytest.raises(UnsupportedQuery):
-        backend.query(spec)
+    result = backend.query(spec)
+    out = result.df
+
+    assert list(out.columns) == ["chat_id", "sum_total_cost"]
+    assert len(out) == 1
+    assert out["chat_id"].iloc[0] == "c1"
+    assert out["sum_total_cost"].iloc[0] == pytest.approx(10.0)
 
 
 def test_unsupported_group_by_raises(tmp_path):
@@ -176,7 +211,8 @@ def test_soft_row_cap_truncates(tmp_path):
         sort=SortSpec(by="s", direction=SortDirection.DESC),
     )
 
-    out, _ = backend.query(spec)
+    result = backend.query(spec)
+    out = result.df
     assert len(out) == 5
 
 

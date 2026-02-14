@@ -1,27 +1,40 @@
 # Semantic Layer Configuration
-# Defines dimensions, measures, and derived metrics
+# Purpose: define what the system is allowed to answer (dims/metrics/filters/limits)
+# Used by Planner validation + Query executor safety caps.
 
 version: 1
 
 dataset:
   name: "joint_costs_daily"
-  description: "Curated joint table of daily costs per account/chat/type"
+  description: "Curated joint table of daily costs at account × chat × type × day grain."
   source: "csv"
   date_column: "date"
   primary_keys: ["account_id", "chat_id", "chat_type", "date"]
   expected_row_grain: "account_id × chat_id × chat_type × day"
   parsing:
-    date_format: "auto"          # e.g. ISO or auto-parse
-    timezone: "UTC"              # set a convention even if date-only
-  row_safety:
-    max_rows_default: 2000
-    max_rows_hard: 20000
-    max_days_default: 30
-    max_days_hard: 180
-    default_top_n: 10
-    drilldown_requires_filters:
-      - "account_id"
-    drilldown_max_days: 7
+    date_format: "auto"          # ISO or auto-parse
+    timezone: "UTC"              # convention even if date-only
+
+business_rules:
+  currency: "USD"
+  price_per_active_account_day_usd: 100
+  cost_cap_per_active_account_day_usd: 30
+
+limits:
+  # hard caps (safety)
+  max_rows_hard: 20000
+  max_days_hard: 180
+  max_group_by_cols: 2
+  max_filter_values_in: 2000
+
+  # defaults (planner should prefer these)
+  max_rows_default: 2000
+  max_days_default: 30
+  default_top_n: 10
+
+  # drilldown constraints (high-cardinality)
+  drilldown_requires_filters: ["account_id"]
+  drilldown_max_days: 7
 
 dimensions:
   - name: "date"
@@ -35,50 +48,48 @@ dimensions:
 
   - name: "chat_type"
     type: "string"
-    description: "Service or workflow category"
+    description: "Channel / interaction type (e.g., whatsapp/telegram)"
 
   - name: "chat_id"
     type: "string"
-    description: "Interaction identifier (drill-down only)"
+    description: "Interaction identifier (drill-down only; requires account_id filter)"
 
 measures:
+  # raw per-row cost components (currency = USD)
   - name: "total_cost"
     type: "float"
-    unit: "currency"
-    description: "Total daily cost for this row"
+    unit: "currency_usd"
+    description: "Total daily cost for this row (includes all components present in the dataset)"
 
   - name: "cost_dialog"
     type: "float"
-    unit: "currency"
-    description: "Cost of dialogue/interaction processing"
+    unit: "currency_usd"
+    description: "Dialogue/interaction processing cost"
 
   - name: "cost_task"
     type: "float"
-    unit: "currency"
-    description: "Cost attributed to tasks"
+    unit: "currency_usd"
+    description: "Tasks cost (raw component)"
 
   - name: "total_cost_tasks"
     type: "float"
-    unit: "currency"
-    description: "Total tasks cost bucket (may include multiple sub-components)"
+    unit: "currency_usd"
+    description: "Tasks cost bucket used in reporting"
 
   - name: "cost_classification"
     type: "float"
-    unit: "currency"
-    description: "Cost attributed to classifications"
-
-  - name: "cost_qc"
-    type: "float"
-    unit: "currency"
-
-  - name: "cost_check_list"
-    type: "float"
-    unit: "currency"
+    unit: "currency_usd"
+    description: "Classifications cost (raw component)"
 
   - name: "total_cost_classifications"
     type: "float"
-    unit: "currency"
-    description: "Total classifications cost bucket (may include multiple sub-components)"
+    unit: "currency_usd"
+    description: "Classifications cost bucket used in reporting"
+
+  - name: "cost_amocrm_call"
+    type: "float"
+    unit: "currency_usd"
+    description: "AmoCRM call-related cost"
 
 flags:
   - name: "has_tasks"
@@ -96,64 +107,92 @@ flags:
     values: [0, 1]
     description: "1 if both tasks and classifications are present for the row/day"
 
+virtual_dimensions:
+  # virtual dim for cost composition (unpivot of cost columns)
+  - name: "service_component"
+    type: "enum"
+    description: "Virtual dimension for cost component breakdown."
+    values:
+      tasks: "total_cost_tasks"
+      classifications: "total_cost_classifications"
+      amocrm_calls: "cost_amocrm_call"
+
 derived_metrics:
+  # these are computed by executor (not by LLM)
+  - name: "total_cost_services"
+    type: "float"
+    unit: "currency_usd"
+    description: "Sum of service costs: total_cost_tasks + total_cost_classifications + cost_amocrm_call"
+
   - name: "active_users"
     type: "int"
-    description: "Count of distinct account_id with total_cost > 0 in the selected window"
+    description: "Count of distinct account_id with total_cost_services > 0 in the selected window"
 
   - name: "dials_analyzed"
     type: "int"
-    description: "Count of distinct (account_id, chat_id, chat_type) with total_cost > 0"
+    description: "Count of distinct (account_id, chat_id, chat_type) with total_cost_services > 0"
 
-  - name: "avg_cost_per_account"
+  - name: "avg_cost_per_active_account_day"
     type: "float"
-    description: "total_cost_sum / active_users (diluted average across active users)"
+    unit: "currency_usd"
+    description: "total_cost_services_sum / active_users"
 
-  - name: "avg_cost_per_account_non_diluted"
+  - name: "p95_cost_per_account_day"
     type: "float"
-    description: >
-      Non-diluted average used for dashboarding: compute average per account for tasks
-      (only accounts with tasks) + average per account for classifications (only accounts with classifications).
-      This may differ from total_cost_sum/active_users.
+    unit: "currency_usd"
+    description: "95th percentile of per-account daily total_cost_services"
+
+  - name: "pct_accounts_above_cap"
+    type: "float"
+    unit: "percent"
+    description: "Percentage of active accounts with per-account daily total_cost_services > cost_cap_per_active_account_day_usd"
+
+  - name: "avg_margin_per_account_day"
+    type: "float"
+    unit: "currency_usd"
+    description: "price_per_active_account_day_usd - avg_cost_per_active_account_day"
 
   - name: "delta_abs"
     type: "float"
-    description: "Difference between current period and comparison period"
+    description: "Difference between current period and comparison period (executor-defined for supported comparisons)"
 
   - name: "delta_pct"
     type: "float"
+    unit: "percent"
     description: "delta_abs / comparison_value"
 
   - name: "share_of_total"
     type: "float"
-    description: "metric_value / total_cost_value"
+    unit: "percent"
+    description: "metric_value / total_cost_services_value"
 
 allowed_operations:
+  aggregations: ["sum", "mean", "median", "count", "count_distinct", "p95"]
+  group_by: ["date", "account_id", "chat_type", "chat_id", "service_component"]
+  sorting: ["asc", "desc"]
   filters:
-    - "date_range"
-    - "account_id_in"
-    - "chat_type_in"
-    - "has_tasks"
-    - "has_classifications"
-    - "has_both"
-  group_by:
-    - "date"
-    - "account_id"
-    - "chat_type"
-    - "chat_id"
-  aggregations:
-    - "sum"
-    - "mean"
-    - "median"
-    - "count"
-    - "count_distinct"
-  sorting:
-    - "asc"
-    - "desc"
-  charts:
-    - "kpi_cards"
-    - "line_trend"
-    - "bar_top_n"
-    - "pie_composition"
-    - "hist_distribution"
-    - "table"
+    # time filters
+    - name: "date_range"
+      args: ["start_date", "end_date"]
+    - name: "last_n_days"
+      args: ["n_days"]
+    - name: "single_day"
+      args: ["day"]
+
+    # entity filters
+    - name: "account_id_in"
+      args: ["values"]
+    - name: "chat_type_in"
+      args: ["values"]
+    - name: "service_component_in"
+      args: ["values"]
+
+    # flags
+    - name: "has_tasks"
+      args: ["value"]
+    - name: "has_classifications"
+      args: ["value"]
+    - name: "has_both"
+      args: ["value"]
+
+  charts: ["kpi_cards", "line_trend", "bar_top_n", "pie_composition", "hist_distribution", "table"]
