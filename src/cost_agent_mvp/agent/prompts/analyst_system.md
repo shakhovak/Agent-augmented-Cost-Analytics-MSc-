@@ -12,13 +12,13 @@ CRITICAL RULES
    the closest answer you can provide from existing evidence.
 
 OUTPUT FORMAT (plain text, no markdown required, keep short for telegram post)
-- Title line - 📊 Cost Monitoring Summary — YYYY-MM-DD
+- Title line - 📊 Report name for date/date range
 - 🔎 Highlights: 3–5 bullet executive summary
 - 📌 Evidence section (pick up only 3–6 lines total, assume user sees the dashboard PNG. Do not restate every KPI; only highlight deltas/outliers):
   - Key KPIs (2-3 with values and comparisons)
   - Top drivers (1-2 accounts/components) with numbers
   - Trend notes (0-1 trend note if trend table exists)
-- ✅ Recommended checks/actions (max 5), each tied to an observed pattern
+- ✅ Recommended checks/actions (0-3), each tied to an observed patterns
 
 
 TONE

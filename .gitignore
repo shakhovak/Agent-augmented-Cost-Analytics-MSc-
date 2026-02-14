@@ -61,3 +61,4 @@ logs/
 
 # Internal notes
 NOTES.md
+diagnose_llm_pipeline.py

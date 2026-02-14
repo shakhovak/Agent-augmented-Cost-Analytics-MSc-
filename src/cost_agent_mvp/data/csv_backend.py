@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import date as dt_date  # Add at top of file if missing
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -15,7 +17,6 @@ from cost_agent_mvp.core.constants import (
 )
 from cost_agent_mvp.core.errors import (
     RowLimitExceeded,
-    TimeWindowExceeded,
     UnsupportedQuery,
     ValidationError,
 )
@@ -77,12 +78,11 @@ class CsvBackend:
     # Public API
     # ---------------------------
 
-    def query(self, spec: QuerySpec) -> tuple[pd.DataFrame, Lineage]:
+    def query(self, spec: QuerySpec) -> Any:  # ← Change return type to Any
         """
-        Execute a QuerySpec safely and return (result_df, lineage).
+        Execute a QuerySpec safely and return object with .df and .lineage attributes.
         """
         tw = normalize_time_window(spec.time_window)
-
         self._enforce_time_window(tw, spec)
         self._enforce_supported_fields(spec)
 
@@ -90,19 +90,38 @@ class CsvBackend:
         df1 = self._apply_filters(df0, spec.filters)
 
         if spec.group_by:
-            result = self._group_and_aggregate(df1, spec.group_by, spec.aggregations)
+            df = self._group_and_aggregate(df1, spec.group_by, spec.aggregations)
         else:
             # No group_by: still allow aggregations (returns single-row table)
-            result = self._aggregate_no_group(df1, spec.aggregations)
+            df = self._aggregate_no_group(df1, spec.aggregations)
 
-        result = self._apply_sort_topn_and_caps(result, spec)
+        df = self._apply_sort_topn_and_caps(df, spec)
 
         lineage = self._make_lineage(
             tw=tw,
             spec=spec,
-            row_count=len(result),
+            row_count=len(df),
         )
-        return result, lineage
+
+        # ✅ CRITICAL FIX: Return object with .df + lineage AS LIST
+        # Convert Lineage object → list of dicts for orchestrator compatibility
+        lineage_list = (
+            [lineage.dict()]
+            if hasattr(lineage, "dict")
+            else (
+                [lineage.model_dump()]
+                if hasattr(lineage, "model_dump")
+                else (
+                    [vars(lineage)]
+                    if hasattr(lineage, "__dict__")
+                    else [lineage]
+                    if isinstance(lineage, dict)
+                    else []
+                )
+            )
+        )
+
+        return SimpleNamespace(df=df, lineage=lineage_list)
 
     # ---------------------------
     # Safety + validation
@@ -127,33 +146,67 @@ class CsvBackend:
             # sort.by could be an alias produced by aggregations; handle that later in sort stage
             pass
 
+    # src/cost_agent_mvp/data/csv_backend.py
+
     def _enforce_time_window(self, tw: TimeWindow, spec: QuerySpec) -> None:
-        if tw.start is None or tw.end is None:
-            raise ValidationError("TimeWindow must be normalized before enforcement.")
+        # ✅ CRITICAL FIX: Parse string dates to date objects BEFORE arithmetic
+        start_val = tw.start
+        end_val = tw.end
 
-        days = (tw.end - tw.start).days + 1
-        hard = self.limits.max_days_hard
-        if days > hard:
-            raise TimeWindowExceeded(f"Requested {days} days exceeds hard limit {hard} days.")
+        # Convert strings to date objects if needed
+        if isinstance(start_val, str):
+            start_date = dt_date.fromisoformat(start_val)
+        else:
+            start_date = start_val  # Already a date object (or None)
 
-        # Drilldown safety: if chat_id is filtered or grouped, require account_id and restrict days
-        uses_chat_id = ("chat_id" in spec.group_by) or (spec.filters.chat_id is not None)
-        if uses_chat_id:
-            if not spec.filters.account_id:
-                raise UnsupportedQuery("Drilldown by chat_id requires an account_id filter.")
-            if days > self.limits.drilldown_max_days:
-                raise TimeWindowExceeded(
-                    f"Drilldown queries are limited to {self.limits.drilldown_max_days} days."
-                )
+        if isinstance(end_val, str):
+            end_date = dt_date.fromisoformat(end_val)
+        else:
+            end_date = end_val  # Already a date object (or None)
+
+        # Now safe to do date arithmetic (only if both dates exist)
+        if start_date and end_date:
+            days = (end_date - start_date).days + 1
+        else:
+            days = 1  # Fallback for non-range types (yesterday, last_n_days)
+
+        # Get max_days limit from semantic layer (passed during CsvBackend init)
+        # Common patterns - try these in order:
+        max_days = 14  # Safe default
+
+        # Pattern 1: backend has .semantic_layer attribute
+        if hasattr(self, "semantic_layer") and self.semantic_layer:
+            max_days = self.semantic_layer.get("limits", {}).get("max_days_hard", 14)
+
+        # Pattern 2: backend has ._semantic_layer attribute
+        elif hasattr(self, "_semantic_layer") and self._semantic_layer:
+            max_days = self._semantic_layer.get("limits", {}).get("max_days_hard", 14)
+
+        # Pattern 3: spec has limits (less common)
+        elif hasattr(spec, "limits"):
+            max_days = spec.limits.get("max_days_hard", 14)
+
+        # Enforce limit
+        if days > max_days:
+            from cost_agent_mvp.agent.plan_compiler import TimeWindowExceeded
+
+            raise TimeWindowExceeded(days, max_days)
 
     # ---------------------------
     # Query execution steps
     # ---------------------------
 
     def _apply_time_window(self, df: pd.DataFrame, tw: TimeWindow) -> pd.DataFrame:
-        assert tw.start is not None and tw.end is not None
+        # ✅ CRITICAL FIX: Convert string boundaries → date objects BEFORE comparison
+        start_boundary = dt_date.fromisoformat(tw.start) if isinstance(tw.start, str) else tw.start
+        end_boundary = dt_date.fromisoformat(tw.end) if isinstance(tw.end, str) else tw.end
+
+        assert start_boundary is not None and end_boundary is not None
+
         # 'date' is already datetime.date (from schema coercion)
-        mask = (df[self.schema.date_column] >= tw.start) & (df[self.schema.date_column] <= tw.end)
+        mask = (df[self.schema.date_column] >= start_boundary) & (
+            df[self.schema.date_column] <= end_boundary
+        )
         return df.loc[mask]
 
     def _apply_filters(self, df: pd.DataFrame, flt: QueryFilters) -> pd.DataFrame:

@@ -4,8 +4,4 @@ User request:
 Available schema and safety constraints (authoritative):
 {{SEMANTIC_LAYER_YAML}}
 
-Available report templates (if any):
-{{REPORT_TEMPLATES_YAML}}
-
-Your task:
-Return a JSON plan following the output schema described in the system message.
+Return a JSON plan following the output schema from the system message.
