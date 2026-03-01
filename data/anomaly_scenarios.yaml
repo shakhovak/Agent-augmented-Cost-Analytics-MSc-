@@ -20,13 +20,16 @@ scenarios:
     seed: 1001
     account_selection:
       mode: random_k
-      k: 30                    # 10x more accounts (was 30)
+      k: 30
+      per_day: true                   # 10x more accounts (was 30)
     window:
-      start_date: 2025-10-15
-      duration_days: 3
+      dates: ["2025-10-15", "2025-10-16", "2025-10-17"]
+      # duration_days: 3
     params:
       component: all             # all | dialog | tasks | classifications | amocrm_call
-      magnitude: 100.0            # multiplier = 1 + magnitude (was 6.0, *10 for visibility)
+      magnitude: 100.0
+      apply_to: all_rows
+      min_base_cost: 1.0        # multiplier = 1 + magnitude (was 6.0, *10 for visibility)
     driver_template: "Increase driven by unusually high token usage in dialog (unit-cost spike)."
 
   - scenario_id: volume_spike_tasks_mar
@@ -34,10 +37,11 @@ scenarios:
     seed: 1002
     account_selection:
       mode: random_k
-      k: 45                    # 10x more accounts (was 45)
+      k: 45
+      per_day: true                   # 10x more accounts (was 45)
     window:
-      start_date: 2025-03-05
-      duration_days: 3
+      dates: ["2025-03-05"]
+      # duration_days: 3
     params:
       component: all             # all | tasks | classifications | amocrm_call
       magnitude: 100.0            # new_n = ceil(old_n * (1 + magnitude)) (was 4.0, *10)
@@ -51,8 +55,8 @@ scenarios:
       mode: random_k
       k: 15                    # 10x more accounts (was 15)
     window:
-      start_date: 2025-06-20
-      duration_days: 3
+      dates: ["2025-06-20"]
+      # duration_days: 3
     params:
       exceed_by: 300
       dialog_cost_multiplier: 0.5          # was 30, *10 so added rows are much more visible

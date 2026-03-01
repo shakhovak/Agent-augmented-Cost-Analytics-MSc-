@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from datetime import date as dt_date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,6 +14,43 @@ import cost_agent_mvp.agent.orchestrator as orch_mod
 from cost_agent_mvp.agent.orchestrator import Orchestrator
 from cost_agent_mvp.core.types import RunRecord  # Required for monkeypatch
 from cost_agent_mvp.data.csv_backend import CsvBackend
+
+
+def _fake_detector_summary_single(
+    *, csv_path: str, day: dt_date, baseline_days: int = 14, context_days: int = 7
+):
+    # minimal shape that downstream code expects
+    det = {
+        "decision": {
+            "day": day.isoformat(),
+            "anomaly": False,
+            "driver": "none",
+            "severity": 0.0,
+            "flagged_accounts": 0,
+            "excess_cost": 0.0,
+        }
+    }
+    return f"No anomaly detected on {day.isoformat()}.", det
+
+
+def _fake_detector_summary_range(
+    *,
+    csv_path: str,
+    start: dt_date,
+    end: dt_date,
+    baseline_days: int = 14,
+    top_k: int = 10,
+    max_scan_days: int = 30,
+):
+    meta = {
+        "range_requested": {"start": start.isoformat(), "end": end.isoformat()},
+        "range_scanned": {"start": start.isoformat(), "end": end.isoformat()},
+        "flagged_days_scanned": 0,
+        "top_k": top_k,
+        "baseline_days": baseline_days,
+        "max_scan_days": max_scan_days,
+    }
+    return "Anomaly scan: no spike days detected.", meta
 
 
 def _write_tiny_csv(csv_path: Path) -> None:
@@ -184,6 +222,8 @@ def test_orchestrator_qa_mocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
     # ✅ FIX: Mock dataset_version to be callable (orchestrator.py:439)
     monkeypatch.setattr(CsvBackend, "dataset_version", lambda self: "mock-version")
+    monkeypatch.setattr(orch_mod, "_detector_summary_single", _fake_detector_summary_single)
+    monkeypatch.setattr(orch_mod, "_detector_summary_range", _fake_detector_summary_range)
 
     # ✅ FIX: Work around orchestrator bug - RunRecord has no to_json() method
     # Add a to_json method that uses orchestrator's _to_jsonable helper

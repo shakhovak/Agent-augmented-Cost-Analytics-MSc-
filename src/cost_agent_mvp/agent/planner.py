@@ -403,7 +403,7 @@ class Planner:
                 filters=[FilterSpec(name="last_n_days", args={"n_days": n})],
                 sort_by="date",
                 sort_dir="asc",
-                chart_requests=[ChartRequest(type="line_trend", x="date", y=metric, title="Trend")],
+                chart_requests=[],
             )
 
         if "top" in t and "account" in t:
@@ -420,14 +420,7 @@ class Planner:
                 top_n=n,
                 sort_by=metric,
                 sort_dir="desc",
-                chart_requests=[
-                    ChartRequest(
-                        type="bar_top_n",
-                        x="account_id",
-                        y=metric,
-                        title=f"Top {n} accounts",
-                    )
-                ],
+                chart_requests=[],
             )
 
         if "breakdown" in t or "by service" in t or "service mix" in t:
@@ -443,9 +436,7 @@ class Planner:
                 time_window=TimeWindow(type="yesterday"),
                 metrics=[metric],
                 group_by=[gb],
-                chart_requests=[
-                    ChartRequest(type="pie_composition", x=gb, y=metric, title="Composition")
-                ],
+                chart_requests=[],
             )
 
         return PlannerPlan(

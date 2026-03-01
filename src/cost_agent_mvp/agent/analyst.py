@@ -47,6 +47,27 @@ def _compact_df(df: pd.DataFrame, max_rows: int = 8, max_cols: int = 20) -> pd.D
     return df.loc[:, cols].head(max_rows).copy()
 
 
+def _clip_text(s: str, max_chars: int) -> str:
+    s = (s or "").strip()
+    if not s:
+        return ""
+    if len(s) <= max_chars:
+        return s
+    return s[: max_chars - 20].rstrip() + "\n... (truncated)"
+
+
+def _inject_detector_summary(user_text: str, detector_summary: str, max_chars: int = 2000) -> str:
+    det = _clip_text(detector_summary, max_chars=max_chars)
+    if not det:
+        return user_text or ""
+    base = (user_text or "").strip()
+    if base:
+        base += "\n\n"
+    # Keep it short and clearly marked (deterministic, not LLM).
+    base += "Deterministic anomaly detector (services-only, baseline=prev 14 days):\n" + det
+    return base
+
+
 def evidence_pack_to_text(
     evidence: EvidencePack,
     *,
@@ -242,6 +263,8 @@ class Analyst:
         user_text: str,
         evidence: EvidencePack,
         charts_metadata: str = "",
+        detector_summary: str = "",  # NEW
+        detector_max_chars: int = 900,
         max_rows_per_table: int = 8,
         max_cols_per_table: int = 20,
         max_tables: int = 12,
@@ -249,6 +272,12 @@ class Analyst:
     ) -> tuple[str, str]:
         if not evidence:
             raise ValueError("Evidence Pack is empty (no tables).")
+
+        user_text2 = _inject_detector_summary(
+            user_text=user_text,
+            detector_summary=detector_summary,
+            max_chars=detector_max_chars,
+        )
 
         evidence_text = evidence_pack_to_text(
             evidence,
@@ -263,7 +292,7 @@ class Analyst:
             system_vars=None,
             user_vars={
                 "MODE": mode,
-                "USER_TEXT": user_text or "",
+                "USER_TEXT": user_text2 or "",
                 "EVIDENCE_PACK_SUMMARY": evidence_text,
                 "CHARTS_METADATA": charts_metadata or "",
             },
@@ -277,6 +306,8 @@ class Analyst:
         mode: str | None = None,
         user_text: str = "",
         charts_metadata: str = "",
+        detector_summary: str = "",  # NEW
+        detector_max_chars: int = 900,
         temperature: float = 0.2,
         max_output_tokens: int = 900,
         max_rows_per_table: int = 8,
@@ -292,7 +323,11 @@ class Analyst:
 
         # Mock mode (CI-safe)
         if mock_mode:
-            text = _mock_answer(mode=mode, question=user_text, evidence=evidence)
+            # include detector summary in the mock too (useful in tests)
+            user_text2 = _inject_detector_summary(
+                user_text, detector_summary, max_chars=detector_max_chars
+            )
+            text = _mock_answer(mode=mode, question=user_text2, evidence=evidence)
             return AnalystResult(
                 answer_text=text,
                 model="mock",
@@ -306,6 +341,8 @@ class Analyst:
             user_text=user_text,
             evidence=evidence,
             charts_metadata=charts_metadata,
+            detector_summary=detector_summary,
+            detector_max_chars=detector_max_chars,
             max_rows_per_table=max_rows_per_table,
             max_cols_per_table=max_cols_per_table,
             max_tables=max_tables,

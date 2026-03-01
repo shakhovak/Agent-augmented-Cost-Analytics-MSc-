@@ -49,6 +49,8 @@ class QueryFilters:
     has_classifications: bool | None = None
     has_both: bool | None = None
 
+    service_component: list[str] | None = None
+
 
 @dataclass(frozen=True)
 class SortSpec:
