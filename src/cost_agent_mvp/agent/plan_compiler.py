@@ -297,7 +297,6 @@ def _compile_filters(
     semantic_layer: Mapping[str, Any],
 ) -> QueryFilters:
     allowed = _allowed_filter_names(semantic_layer)
-    virtual_dims = _virtual_dimensions(semantic_layer)
 
     # QueryFilters is frozen -> construct in one go
     data: dict[str, Any] = {}
@@ -322,12 +321,6 @@ def _compile_filters(
         if norm_name not in allowed:
             _raise_unsupported(f"Unsupported filter: {raw_name}")
 
-        # prevent virtual dimension filters
-        if norm_name in virtual_dims or norm_name.startswith("service_component"):
-            _raise_unsupported(
-                "Filter on virtual dimension 'service_component' is not supported by CsvBackend yet."
-            )
-
         # membership filters
         if norm_name.endswith("_in"):
             vals = args.get("values", None)
@@ -348,6 +341,8 @@ def _compile_filters(
                 data["chat_id"] = [str(x) for x in vals]
             elif norm_name == "chat_type_in":
                 data["chat_type"] = [str(x) for x in vals]
+            elif norm_name == "service_component_in":
+                data["service_component"] = [str(x) for x in vals]
             else:
                 _raise_unsupported(f"Filter not yet mapped to backend: {norm_name}")
             continue
@@ -399,9 +394,11 @@ def compile_plan_to_queryspec(
     # --- group_by ---
     group_by = list(getattr(plan, "group_by", []) or [])
     for dim in group_by:
-        if dim in virtual_dims:
+        # Allow the one supported virtual dimension
+        if dim in virtual_dims and dim != "service_component":
             _raise_unsupported(f"Group-by '{dim}' is a virtual dimension and not supported yet.")
-        if dim not in allowed_dims:
+
+        if dim not in allowed_dims and dim != "service_component":
             _raise_unsupported(f"Unsupported group-by dimension: {dim}")
 
     # --- metrics -> aggregations ---
@@ -415,10 +412,15 @@ def compile_plan_to_queryspec(
         field, agg_override = _parse_metric_token(tok)
 
         if field in derived:
-            _raise_unsupported(f"Metric '{field}' is derived and not queryable yet")
-        if field not in allowed_measures:
+            pass
+        if field not in allowed_measures and field not in derived:
             _raise_unsupported(f"Unsupported metric: {field}")
-
+        is_derived = field in derived
+        agg = agg_override or Aggregation.SUM
+        if is_derived and agg != Aggregation.SUM:
+            _raise_unsupported(
+                f"Derived metric '{field}' only supports SUM in MVP (got '{agg.value}')"
+            )
         agg = agg_override or (
             Aggregation.SUM if hasattr(Aggregation, "SUM") else next(iter(allowed_aggs))
         )

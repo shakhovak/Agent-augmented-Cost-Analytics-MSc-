@@ -46,6 +46,7 @@ data/*.csv
 !data/sample/*.csv
 !data/README.md
 
+
 # OS
 .DS_Store
 Thumbs.db
@@ -58,6 +59,7 @@ logs/
 .ipynb_checkpoints/
 *.ipynb
 !data/*.ipynb
+*.xlsx
 
 # Internal notes
 NOTES.md

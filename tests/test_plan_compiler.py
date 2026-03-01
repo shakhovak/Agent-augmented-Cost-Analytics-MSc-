@@ -101,30 +101,69 @@ def test_compiler_happy_path_builds_queryspec() -> None:
     assert spec.sort.direction == SortDirection.DESC
 
 
-def test_compiler_rejects_virtual_dimension() -> None:
+def test_compiler_allows_service_component_virtual_dimension() -> None:
     cfg = _semantic_layer_min()
     plan = PlannerPlan(
         status="OK",
         intent="breakdown",
         time_window=TimeWindow(type="single_day", day="2025-07-20"),
-        group_by=["service_component"],  # virtual
+        group_by=["service_component"],
         metrics=["sum(total_cost_tasks)"],
+        top_n=1,
+        sort_by="sum_total_cost_tasks",
+        sort_dir="desc",
     )
 
-    with pytest.raises(UnsupportedQuery):
-        compile_plan_to_queryspec(plan, cfg, anchor_day=date(2025, 7, 21))
+    specs = compile_plan_to_queryspec(plan, cfg, anchor_day=date(2025, 7, 21))
+    assert len(specs) == 1
+    spec = specs[0]
+    assert spec.group_by == ["service_component"]
+    # metric should compile normally
+    assert spec.aggregations[0].field == "total_cost_tasks"
+    assert spec.aggregations[0].as_name == "sum_total_cost_tasks"
 
 
-def test_compiler_rejects_derived_metric() -> None:
+def test_compiler_allows_derived_metric_total_cost_services() -> None:
     cfg = _semantic_layer_min()
     plan = PlannerPlan(
         status="OK",
         intent="question",
         time_window=TimeWindow(type="single_day", day="2025-07-20"),
-        group_by=["account_id"],
-        metrics=["total_cost_services"],  # derived metric
+        group_by=[],
+        metrics=["total_cost_services"],
     )
 
+    specs = compile_plan_to_queryspec(plan, cfg, anchor_day=date(2025, 7, 21))
+    assert len(specs) == 1
+    spec = specs[0]
+    assert len(spec.aggregations) == 1
+    a0 = spec.aggregations[0]
+    assert a0.field == "total_cost_services"
+    assert a0.as_name == "sum_total_cost_services"
+    assert a0.agg == Aggregation.SUM
+
+
+def test_compiler_rejects_unknown_virtual_dimension() -> None:
+    cfg = _semantic_layer_min()
+    plan = PlannerPlan(
+        status="OK",
+        intent="breakdown",
+        time_window=TimeWindow(type="single_day", day="2025-07-20"),
+        group_by=["region"],  # not in dimensions or allowed virtuals
+        metrics=["sum(total_cost_tasks)"],
+    )
+    with pytest.raises(UnsupportedQuery):
+        compile_plan_to_queryspec(plan, cfg, anchor_day=date(2025, 7, 21))
+
+
+def test_compiler_rejects_unknown_metric() -> None:
+    cfg = _semantic_layer_min()
+    plan = PlannerPlan(
+        status="OK",
+        intent="question",
+        time_window=TimeWindow(type="single_day", day="2025-07-20"),
+        metrics=["made_up_metric"],
+    )
     with pytest.raises(UnsupportedQuery):
         compile_plan_to_queryspec(plan, cfg, anchor_day=date(2025, 7, 21))
 

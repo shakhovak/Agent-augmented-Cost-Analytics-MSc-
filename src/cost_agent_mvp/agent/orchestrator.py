@@ -6,7 +6,7 @@ import os
 import platform
 import subprocess
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,6 +14,10 @@ from uuid import uuid4
 import pandas as pd
 
 from cost_agent_mvp.agent.analyst import Analyst, AnalystResult
+from cost_agent_mvp.agent.detector import (
+    detect_anomaly_for_end_day,
+    format_detector_brief,
+)
 from cost_agent_mvp.agent.plan_compiler import compile_plan_to_queryspec
 from cost_agent_mvp.agent.planner import Planner, PlannerPlan
 from cost_agent_mvp.agent.verifier import (
@@ -35,6 +39,211 @@ logger = logging.getLogger(__name__)
 # -----------------------------
 # Small helpers
 # -----------------------------
+def query_context_to_df(
+    *,
+    anchor_day: date | None,
+    win_start: date | None,
+    win_end: date | None,
+    tw_type: str | None,
+) -> pd.DataFrame:
+    def parts(d: date | None, prefix: str) -> dict[str, Any]:
+        if d is None:
+            return {
+                f"{prefix}_date": None,
+                f"{prefix}_year": None,
+                f"{prefix}_month": None,
+                f"{prefix}_day": None,
+            }
+        return {
+            f"{prefix}_date": d.isoformat(),
+            f"{prefix}_year": d.year,
+            f"{prefix}_month": d.month,
+            f"{prefix}_day": d.day,
+        }
+
+    row: dict[str, Any] = {
+        "anchor_day": anchor_day.isoformat() if anchor_day else None,
+        "time_window_type": tw_type,
+        "span_days": ((win_end - win_start).days + 1 if (win_start and win_end) else None),
+    }
+    row.update(parts(win_start, "start"))
+    row.update(parts(win_end, "end"))
+
+    # for single-day queries, also provide "day_*" fields explicitly
+    if win_start and win_end and win_start == win_end:
+        row.update(parts(win_end, "day"))
+    else:
+        row.update({"day_date": None, "day_year": None, "day_month": None, "day_day": None})
+
+    return pd.DataFrame([row])
+
+
+def detector_payload_to_df(det: dict[str, Any]) -> pd.DataFrame:
+    """
+    Convert detector payload (single-day or range meta) into a tiny, numeric-friendly table
+    so verifier can accept numbers mentioned in the narrative.
+    """
+    if not isinstance(det, dict) or not det:
+        return pd.DataFrame([{"skipped": True, "reason": "empty_detector_payload"}])
+
+    if det.get("skipped"):
+        return pd.DataFrame([{"skipped": True, "reason": det.get("reason", "")}])
+
+    # common single-day shape: det["decision"] exists
+    decision = det.get("decision") if isinstance(det.get("decision"), dict) else None
+    if decision:
+        row = {
+            "day": decision.get("day"),
+            "anomaly": bool(decision.get("anomaly", False)),
+            "driver": decision.get("driver"),
+            "severity": decision.get("severity"),
+            "flagged_accounts": decision.get("flagged_accounts"),
+            "excess_cost": decision.get("excess_cost"),
+        }
+        # optionally include z-scores if present (keep stable column names)
+        for k in (
+            "services_total_cost_z",
+            "log_tasks_per_chat_z",
+            "log_dialog_cost_per_chat_z",
+        ):
+            if k in decision:
+                row[k] = decision.get(k)
+        return pd.DataFrame([row])
+
+    # range meta: try best-effort list extraction
+    # (adapt keys to your actual meta shape if needed)
+    days = det.get("top_days") or det.get("flagged_days") or det.get("days") or []
+    if isinstance(days, list) and days and isinstance(days[0], dict):
+        # list of dicts already
+        df = pd.DataFrame(days)
+        # keep only a compact, stable subset if present
+        keep = [
+            c
+            for c in [
+                "day",
+                "driver",
+                "severity",
+                "flagged_accounts",
+                "excess_cost",
+                "z",
+            ]
+            if c in df.columns
+        ]
+        return df[keep] if keep else df
+
+    # fallback: single row
+    return pd.DataFrame([{"skipped": False, "note": "unrecognized_detector_shape"}])
+
+
+def _parse_day(s: str | None) -> date | None:
+    if not s:
+        return None
+    return datetime.fromisoformat(s).date()
+
+
+def _extract_compiled_window_from_specs(
+    specs: list[Any],
+) -> tuple[date | None, date | None]:
+    """
+    Best-effort extraction of (start, end) from compiled QuerySpec.
+    We use _to_jsonable(spec) to avoid relying on internal types.
+    """
+    if not specs:
+        return None, None
+
+    s0 = _to_jsonable(specs[0])
+    tw = (s0.get("time_window") or {}) if isinstance(s0, dict) else {}
+
+    # common shapes: {"type":"single_day","day":"YYYY-MM-DD"} or {"type":"range","start":...,"end":...}
+    day = _parse_day(tw.get("day"))
+    start = _parse_day(tw.get("start"))
+    end = _parse_day(tw.get("end"))
+
+    if day and not end:
+        end = day
+    if end and not start:
+        start = end
+
+    return start, end
+
+
+def _detector_summary_single(
+    *,
+    csv_path: str,
+    day: date,
+    baseline_days: int = 14,
+    context_days: int = 7,
+) -> tuple[str, dict[str, Any]]:
+    det = detect_anomaly_for_end_day(
+        csv_path=csv_path,
+        end_day=day,
+        baseline_days=baseline_days,
+        context_days=context_days,
+    )
+    return format_detector_brief(det), det
+
+
+def _detector_summary_range(
+    *,
+    csv_path: str,
+    start: date,
+    end: date,
+    baseline_days: int = 14,
+    top_k: int = 10,
+    max_scan_days: int = 30,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Loop day-by-day, but only keep top-K flagged days (token efficient).
+    Caps scanning to max_scan_days (MVP safety for long ranges).
+    """
+    total_days = (end - start).days + 1
+    scan_days = min(total_days, max_scan_days)
+
+    # If range is long, scan only the *tail* ending at 'end' (most relevant operationally).
+    scan_start = end - timedelta(days=scan_days - 1)
+
+    flagged: list[tuple[float, str]] = []
+    d = scan_start
+    while d <= end:
+        det = detect_anomaly_for_end_day(
+            csv_path=csv_path,
+            end_day=d,
+            baseline_days=baseline_days,
+            context_days=7,
+        )
+        dec = det.get("decision") or {}
+        if bool(dec.get("anomaly")):
+            sev = float(dec.get("severity") or 0.0)
+            why = str(dec.get("why") or "").strip()
+            if why:
+                flagged.append((sev, why))
+        d += timedelta(days=1)
+
+    flagged.sort(key=lambda x: x[0], reverse=True)
+    top = flagged[:top_k]
+
+    if not flagged:
+        msg = (
+            f"Anomaly scan (services-only, baseline=prev {baseline_days}d): "
+            f"no spike days detected in scanned range {scan_start.isoformat()}..{end.isoformat()}."
+        )
+    else:
+        lines = "\n".join([f"- {why}" for _, why in top])
+        msg = (
+            f"Anomaly scan (services-only, baseline=prev {baseline_days}d): "
+            f"{len(flagged)} flagged day(s) in scanned range {scan_start.isoformat()}..{end.isoformat()}.\n"
+            f"Top {len(top)}:\n{lines}"
+        )
+
+    meta = {
+        "range_requested": {"start": start.isoformat(), "end": end.isoformat()},
+        "range_scanned": {"start": scan_start.isoformat(), "end": end.isoformat()},
+        "flagged_days_scanned": len(flagged),
+        "top_k": top_k,
+        "baseline_days": baseline_days,
+        "max_scan_days": max_scan_days,
+    }
+    return msg, meta
 
 
 def now_utc_iso() -> str:
@@ -292,7 +501,11 @@ class Orchestrator:
 
         # If planner explicitly says "UNSUPPORTED", return cleanly
         if getattr(plan, "status", "OK") != "OK":
-            msg = getattr(plan, "error_message", None) or "Unsupported request."
+            msg = (
+                getattr(plan, "reason", None)
+                or getattr(plan, "error_message", None)
+                or "Unsupported request."
+            )
             verifier = VerifierOutput(
                 status="UNSUPPORTED",
                 passed=False,
@@ -344,18 +557,88 @@ class Orchestrator:
                 query_specs=[],
                 lineage=[],
             )
+            # 2.5) Detector (deterministic) — token-efficient summary for Analyst
+        detector_summary = ""
+        detector_payload: dict[str, Any] = {}
+
+        # Use the *planner* time_window type to decide “single vs range”
+        tw = getattr(plan, "time_window", None)
+        tw_type = getattr(tw, "type", None) if tw is not None else None
+
+        # We rely on compiled specs to get concrete dates (anchor resolved).
+        win_start, win_end = _extract_compiled_window_from_specs(specs)
+
+        limits = (semantic_layer.get("limits") or {}) if isinstance(semantic_layer, dict) else {}
+        max_scan_days = int(limits.get("max_days_default", 30))
+
+        # MVP rule: yesterday -> skip detector (as you described)
+        if tw_type == "yesterday":
+            detector_summary = ""
+            detector_payload = {
+                "skipped": True,
+                "reason": "time_window=yesterday (MVP: no anomaly scan)",
+            }
+        else:
+            # single day if start==end, otherwise range scan
+            if win_start and win_end and win_start == win_end:
+                detector_summary, det = _detector_summary_single(
+                    csv_path=csv_path,
+                    day=win_end,
+                    baseline_days=14,
+                    context_days=7,
+                )
+                detector_payload = det
+            elif win_start and win_end:
+                detector_summary, meta = _detector_summary_range(
+                    csv_path=csv_path,
+                    start=win_start,
+                    end=win_end,
+                    baseline_days=14,
+                    top_k=10,
+                    max_scan_days=max_scan_days,
+                )
+                detector_payload = meta
+            else:
+                detector_summary = ""
+                detector_payload = {
+                    "skipped": True,
+                    "reason": "Could not infer window bounds from compiled specs.",
+                }
+
+        # Persist detector payload for debugging / evaluation
+        (run_dir / "detector.json").write_text(
+            json.dumps(_to_jsonable(detector_payload), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
 
         # 3) Execute
         evidence: dict[str, pd.DataFrame] = {}
         lineage: list[dict[str, Any]] = []
-
+        det_df = detector_payload_to_df(detector_payload)
+        evidence["detector"] = det_df
+        _write_df_csv(det_df, evidence_dir / "detector.csv")
         base_name = (getattr(plan, "view", None) or plan.intent or "query").strip() or "query"
         for i, spec in enumerate(specs, start=1):
-            res = backend.query(spec)
+            try:
+                res = backend.query(spec)
+            except Exception as exc:
+                (run_dir / "backend_error.txt").write_text(str(exc), encoding="utf-8")
+                raise
             table_name = base_name if i == 1 else f"{base_name}_{i}"
             evidence[table_name] = res.df
             lineage.extend(res.lineage or [])
             _write_df_csv(res.df, evidence_dir / f"{table_name}.csv")
+
+        # --- Add query context table so verifier can match date numbers (2025, 6, 20, etc.) ---
+        ctx_df = query_context_to_df(
+            anchor_day=anchor_day,
+            win_start=win_start,
+            win_end=win_end,
+            tw_type=str(tw_type) if tw_type is not None else None,
+        )
+
+        evidence["query_context"] = ctx_df
+        _write_df_csv(ctx_df, evidence_dir / "query_context.csv")
 
         # 4) Analyst
         analyst = Analyst(prompts_dir=self.prompts_dir, default_mode="qa")
@@ -363,6 +646,8 @@ class Orchestrator:
             evidence=evidence,
             mode="qa",
             user_text=user_text,
+            detector_summary=detector_summary,  # NEW
+            detector_max_chars=700,  # keep tight for tokens
             mock_mode=mock_analyst or (mode != "llm"),
         )
         answer_text = analyst_res.answer_text.strip()
