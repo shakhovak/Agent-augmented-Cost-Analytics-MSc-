@@ -1,0 +1,8 @@
+-r requirements.txt
+
+ipykernel==7.1.0
+ipython==9.10.0
+jupyter_client==8.8.0
+jupyter_core==5.9.1
+seaborn==0.13.2
+scipy==1.17.0
