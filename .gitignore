@@ -60,6 +60,7 @@ logs/
 *.ipynb
 !data/*.ipynb
 *.xlsx
+*.tsv
 
 # Internal notes
 NOTES.md

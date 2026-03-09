@@ -136,9 +136,9 @@ def test_anomaly_injection_end_to_end(tmp_path: Path):
 
     generator_mod = _load_module_from_path("generator", generator_path)
 
-    assert hasattr(
-        generator_mod, "generate_joint_dataset"
-    ), "generate_joint_dataset() not found in generator.py"
+    assert hasattr(generator_mod, "generate_joint_dataset"), (
+        "generate_joint_dataset() not found in generator.py"
+    )
     assert hasattr(generator_mod, "load_yaml"), "load_yaml() not found in generator.py"
 
     generate_joint_dataset = generator_mod.generate_joint_dataset
@@ -209,10 +209,10 @@ def test_anomaly_injection_end_to_end(tmp_path: Path):
     for ev in labels:
         s = pd.to_datetime(ev["start_date"]).date()
         e = pd.to_datetime(ev["end_date"]).date()
-        assert (
-            data_min <= s <= data_max
-        ), f"Label start_date {s} outside data range [{data_min}, {data_max}]"
-        assert (
-            data_min <= e <= data_max
-        ), f"Label end_date {e} outside data range [{data_min}, {data_max}]"
+        assert data_min <= s <= data_max, (
+            f"Label start_date {s} outside data range [{data_min}, {data_max}]"
+        )
+        assert data_min <= e <= data_max, (
+            f"Label end_date {e} outside data range [{data_min}, {data_max}]"
+        )
         assert s <= e, "Label has start_date after end_date"
